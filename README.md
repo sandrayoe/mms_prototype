@@ -1,2 +1,5 @@
 # mms_prototype_trial
 Only for prototyping
+
+Ver1 - 12/3/2025
+UI almost ready
