@@ -234,74 +234,131 @@ const handleIncomingData = async (event: any) => {
     updateCurrentPair: (pair: [number, number]) => void,
     updateBestPair: (pair: [number, number]) => void,
     updateCurrentValue: (current: number) => void,
-    updateBestCurrent: (current: number) => void, 
-    minCurrent: number, 
+    updateBestCurrent: (current: number) => void,
+    minCurrent: number,
     maxCurrent: number
-    ) => {
-        console.log("🔄 Starting local optimization...");
-        setIsOptimizationRunning(true);
-        isOptimizationRunningRef.current = true;
-
-        // Start IMU if not already running
-        if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
+  ) => {
+      console.log("🔄 Starting Stochastic Extremum Seeking (SES) Optimization...");
+      setIsOptimizationRunning(true);
+      isOptimizationRunningRef.current = true;
+  
+      // Start IMU if not already running
+      if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
           console.log("📡 Starting IMU sensors before optimization...");
           startIMU();
-          await new Promise(res => setTimeout(res, 500)); // Give some time for data to stream
-        }
+          await new Promise(res => setTimeout(res, 1000)); // Delay to allow IMU data to populate
+      }
+  
+      // Generate unique pairs of electrodes (9 electrodes → 36 pairs)
+      const electrodePairs: [number, number][] = [];
+      for (let i = 1; i <= 9; i++) {
+          for (let j = i + 1; j <= 9; j++) {
+              electrodePairs.push([i, j]);
+          }
+      }
+      const numPairs = electrodePairs.length;
+  
+      // === SES PARAMETERS ===
+      const lambdaDecay = 0.5;
+      const qVariance = 0.3;
+      const dt = 0.1;
+      const numIterations = 50;
+  
+      let increment_I = 1; // Integer increment for current
+      let stabilityThreshold = 5;
+      let activationThresholdLow = 0.2;
+      let activationThresholdStable = 0.4;
+      let bestPairStableThreshold = 5;
+  
+      // === INITIALIZATION ===
+      let currentPairIndex = Math.floor(Math.random() * numPairs);
+      let I_k = minCurrent;
+      let eta = 0;
+      let stabilityCounter = 0;
+      let bestPairStableCount = 0; 
+      let currentStable = false;
+  
+      console.log(`🎯 Starting with Pair: ${electrodePairs[currentPairIndex]}, Current: ${I_k}mA`);
+  
+      for (let iteration = 0; iteration < numIterations && isOptimizationRunningRef.current; iteration++) {
+          // Introduce a delay to avoid IMU stream conflicts
+          await new Promise(res => setTimeout(res, 500));
+  
+          // === Ornstein-Uhlenbeck Process (Stochastic Perturbation) ===
+          eta = eta - lambdaDecay * eta * dt + Math.sqrt(qVariance) * (Math.random() - 0.5);
+          let perturbedIndex = Math.max(0, Math.min(numPairs - 1, Math.round(currentPairIndex + eta)));
+  
+          // Select new electrode pair
+          let newPair = electrodePairs[perturbedIndex];
+  
+          // === Measure muscle activation using IMU ===
+          let imu1 = imuData.imu1_changes.reduce((a, b) => a + b, 0) / imuData.imu1_changes.length || 0;
+          let imu2 = imuData.imu2_changes.reduce((a, b) => a + b, 0) / imuData.imu2_changes.length || 0;
+          let newActivation = Math.abs(imu1 - imu2); // Simulated activation function
+  
+          // === Stability-Based Electrode Selection ===
+          let prevActivation = Math.abs(imuData.imu1_changes[imuData.imu1_changes.length - 2] || 0 -
+                                        imuData.imu2_changes[imuData.imu2_changes.length - 2] || 0);
+  
+          if (newActivation > prevActivation) {
+              stabilityCounter++;
+              if (stabilityCounter >= stabilityThreshold) {
+                  currentPairIndex = perturbedIndex; // Switch to the better pair
+                  stabilityCounter = 0;
+              }
+          } else {
+              stabilityCounter = 0; // Reset if the new pair is not consistently better
+          }
+  
+          // === Adaptive Current Increase (Integer Steps) ===
+          if (newActivation < activationThresholdLow && !currentStable) {
+              I_k = Math.min(I_k + increment_I, maxCurrent);
+              console.log(`⚡ Increasing current to ${I_k}mA (activation too low: ${newActivation.toFixed(2)})`);
+          } else if (newActivation >= activationThresholdStable) {
+              currentStable = true; // Stop increasing current
+          }
+  
+          // Update UI
+          updateCurrentPair(newPair);
+          updateCurrentValue(I_k);
+  
+          console.log(`⚡ Stimulation: Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
+  
+          // Send stimulation command to Bluetooth device
+          await sendCommand("e", I_k, newPair[0], newPair[1], "1", "0");
+          await new Promise(res => setTimeout(res, 1000));
 
-        const electrodePairs: [number, number][] = [];  // Generate 36 unique pairs from 9 electrodes
-        for (let i = 1; i <= 9; i++) {
-            for (let j = i + 1; j <= 9; j++) {
-                electrodePairs.push([i, j]);
+          // Check if we have a stable best pair
+          if (electrodePairs[currentPairIndex] === newPair) {
+              bestPairStableCount++;
+            } else {
+              bestPairStableCount = 0;
             }
-        }
+  
+          // Store best values
+          updateBestPair(electrodePairs[currentPairIndex]);
+          updateBestCurrent(I_k);
 
-        let bestPair: [number, number] | null = null;
-        let bestIntensity = minCurrent;
-
-        while (isOptimizationRunningRef.current) {
-            if (!isOptimizationRunningRef.current) break; 
-
-            // Select a random electrode pair
-            const newPair = electrodePairs[Math.floor(Math.random() * electrodePairs.length)];
-            updateCurrentPair(newPair);
-
-            // Adjust intensity using IMU data
-            const imu1 = imuData.imu1_changes.reduce((a, b) => a + b, 0) / imuData.imu1_changes.length || 0;
-            const imu2 = imuData.imu2_changes.reduce((a, b) => a + b, 0) / imuData.imu2_changes.length || 0;
-            const imuVariation = Math.abs(imu1 - imu2);
-            const newIntensity = Math.min(maxCurrent, Math.max(minCurrent, bestIntensity + imuVariation));
-
-            updateCurrentValue(newIntensity);
-
-            console.log(`⚡ Sending Stimulation: Pair (${newPair[0]}, ${newPair[1]}) at ${newIntensity} mA`);
-            await new Promise(res => setTimeout(res, 500)); 
-
-            // **Send Command to Bluetooth Device**
-            //await sendCommand("e", newIntensity, 1, 4, "1", "0");
-            await sendCommand("e", newIntensity, newPair[0], newPair[1], "1", "0"); // Adjust stimulation settings
-            await new Promise(res => setTimeout(res, 500));  // Wait 500ms
-
-            // Check if this is the best pair so far
-            if (imuVariation > 5) {  // Adjust threshold as needed
-                bestPair = newPair;
-                bestIntensity = newIntensity;
-                updateBestPair(newPair);
-                updateBestCurrent(newIntensity);
+          // === Stopping Conditions ===
+          if (bestPairStableCount >= bestPairStableThreshold) {
+                console.log(`✅ Best pair is stable for ${bestPairStableThreshold} iterations. Stopping optimization.`);
+                await stopOptimizationLoop();
+                return;
             }
 
-            // immediately stops optimization 
-            if (!isOptimizationRunningRef.current) break;
-
-            // **Stopping Condition**
-            if (bestPair && bestIntensity >= maxCurrent) {
-              isOptimizationRunningRef.current = false;
-            }
-        }
-
-        console.log(`✅ Best Pair Found: (${bestPair?.[0]}, ${bestPair?.[1]}) at ${bestIntensity} mA`);
-    };
-
+          if (I_k >= maxCurrent) {
+                console.log(`⚡ Maximum current reached (${maxCurrent}mA). Stopping optimization.`);
+                await stopOptimizationLoop();
+                return;
+          }
+      }
+  
+      console.log(`🏆 Optimization Complete! Best Pair: ${electrodePairs[currentPairIndex]}, Final Current: ${I_k}mA`);
+      await stopOptimizationLoop(); 
+  };
+  
+  
+  
     const stopOptimizationLoop = async () => {
         isOptimizationRunningRef.current = false; 
         setIsOptimizationRunning(false);
