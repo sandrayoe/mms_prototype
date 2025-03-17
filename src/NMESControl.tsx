@@ -88,6 +88,7 @@ const NMESControlPanel: React.FC = () => {
 
   const handleStartOptimization = async () => {
       console.log("🟢 Starting optimization...");
+      handleStartIMU();
       setElapsedTime(0);
       setBestPair(null);
       setCurrentPair(null);
@@ -107,6 +108,7 @@ const NMESControlPanel: React.FC = () => {
   const handleStopOptimization = async () => {
       console.log("🛑 Stopping optimization...");
       await stopOptimizationLoop(); // ✅ Stops the loop & updates UI state
+      handleStopIMU();
   };
 
   const handleStartIMU = () => {

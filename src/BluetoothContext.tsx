@@ -242,6 +242,13 @@ const handleIncomingData = async (event: any) => {
         setIsOptimizationRunning(true);
         isOptimizationRunningRef.current = true;
 
+        // Start IMU if not already running
+        if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
+          console.log("📡 Starting IMU sensors before optimization...");
+          startIMU();
+          await new Promise(res => setTimeout(res, 500)); // Give some time for data to stream
+        }
+
         const electrodePairs: [number, number][] = [];  // Generate 36 unique pairs from 9 electrodes
         for (let i = 1; i <= 9; i++) {
             for (let j = i + 1; j <= 9; j++) {
@@ -268,11 +275,12 @@ const handleIncomingData = async (event: any) => {
             updateCurrentValue(newIntensity);
 
             console.log(`⚡ Sending Stimulation: Pair (${newPair[0]}, ${newPair[1]}) at ${newIntensity} mA`);
+            await new Promise(res => setTimeout(res, 500)); 
 
             // **Send Command to Bluetooth Device**
             //await sendCommand("e", newIntensity, 1, 4, "1", "0");
             await sendCommand("e", newIntensity, newPair[0], newPair[1], "1", "0"); // Adjust stimulation settings
-            await new Promise(res => setTimeout(res, 1000));  // Wait 500ms
+            await new Promise(res => setTimeout(res, 500));  // Wait 500ms
 
             // Check if this is the best pair so far
             if (imuVariation > 5) {  // Adjust threshold as needed
