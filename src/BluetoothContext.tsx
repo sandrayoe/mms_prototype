@@ -220,7 +220,7 @@ const handleIncomingData = async (event: any) => {
       )
     );
 
-    console.log(`📤 Sending Command as Bytes:`, commandBytes);
+    //console.log(`📤 Sending Command as Bytes:`, commandBytes);
     await rxCharacteristic.writeValue(commandBytes);
 };
 
@@ -238,13 +238,13 @@ const handleIncomingData = async (event: any) => {
     minCurrent: number,
     maxCurrent: number
   ) => {
-      console.log("🔄 Starting Stochastic Extremum Seeking (SES) Optimization...");
+      console.log("Starting Stochastic Extremum Seeking (SES) Optimization...");
       setIsOptimizationRunning(true);
       isOptimizationRunningRef.current = true;
   
       // Start IMU if not already running
       if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
-          console.log("📡 Starting IMU sensors before optimization...");
+          //console.log("📡 Starting IMU sensors before optimization...");
           startIMU();
           await new Promise(res => setTimeout(res, 1000)); // Delay to allow IMU data to populate
       }
@@ -266,8 +266,8 @@ const handleIncomingData = async (event: any) => {
   
       let increment_I = 1; // Integer increment for current
       let stabilityThreshold = 5;
-      let activationThresholdLow = 0.2;
-      let activationThresholdStable = 0.4;
+      let activationThresholdLow = 0.1;
+      let activationThresholdStable = 0.3;
       let bestPairStableThreshold = 5;
   
       // === INITIALIZATION ===
@@ -322,7 +322,7 @@ const handleIncomingData = async (event: any) => {
           updateCurrentPair(newPair);
           updateCurrentValue(I_k);
   
-          console.log(`⚡ Stimulation: Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
+          console.log(`Stimulation: Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
   
           // Send stimulation command to Bluetooth device
           await sendCommand("e", I_k, newPair[0], newPair[1], "1", "0");
@@ -334,27 +334,30 @@ const handleIncomingData = async (event: any) => {
             } else {
               bestPairStableCount = 0;
             }
-  
-          // Store best values
-          updateBestPair(electrodePairs[currentPairIndex]);
-          updateBestCurrent(I_k);
+          
 
           // === Stopping Conditions ===
           if (bestPairStableCount >= bestPairStableThreshold) {
                 console.log(`✅ Best pair is stable for ${bestPairStableThreshold} iterations. Stopping optimization.`);
                 await stopOptimizationLoop();
+                updateBestPair(electrodePairs[currentPairIndex]);
+                updateBestCurrent(I_k);
                 return;
             }
 
           if (I_k >= maxCurrent) {
                 console.log(`⚡ Maximum current reached (${maxCurrent}mA). Stopping optimization.`);
                 await stopOptimizationLoop();
+                updateBestPair(electrodePairs[currentPairIndex]);
+                updateBestCurrent(I_k);
                 return;
           }
       }
   
-      console.log(`🏆 Optimization Complete! Best Pair: ${electrodePairs[currentPairIndex]}, Final Current: ${I_k}mA`);
-      await stopOptimizationLoop(); 
+      console.log(`Optimization Complete. Best Pair: ${electrodePairs[currentPairIndex]}, Final Current: ${I_k}mA`);
+      await stopOptimizationLoop();
+      updateBestPair(electrodePairs[currentPairIndex]);
+      updateBestCurrent(I_k); 
   };
   
   
