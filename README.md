@@ -6,3 +6,6 @@ UI almost ready
 
 
 Ver2 (branch1) - verryyy early release of the search algorithm
+
+
+Ver3 - Algorithm works (needs improvement), added initialization button for some parameters (freq, phase duration, etc.)
