@@ -229,7 +229,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         )
     );
 
-    console.log(`📤 Sending Command as Raw Bytes:`, commandBytes);
+    //console.log(`📤 Sending Command as Raw Bytes:`, commandBytes);
     await rxCharacteristic.writeValue(commandBytes);
 };
 
@@ -268,7 +268,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   
 
   const initializationConfig = [
-    { cmd: "f", value: 15 },  // frequency
+    { cmd: "f", value: 35 },  // frequency
     { cmd: "d", value: 7 }, // phase duration
     { cmd: "o", value: 5 },   // ON time
     { cmd: "O", value: 10 },   // OFF time
@@ -277,24 +277,31 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ];
 
   const initializeDevice = async() =>{
-    isInitializingRef.current = true;
-    console.log("Initializing device parameters...");
-    if (!txCharacteristic) return;
-    txCharacteristic.addEventListener("characteristicvaluechanged", handleIncomingData);
-    await txCharacteristic.startNotifications();
 
-    const padValue = (num: number): string => num < 10 ? "0" + num : num.toString();
-
-    for (const { cmd, value } of initializationConfig) {
-      console.log(`Sending command '${cmd}'`);
-      const responsePromise = waitForDeviceResponse(cmd, 1000);
-      await sendCommand(cmd, padValue(value), "0");
-      await responsePromise;
+    if (!txCharacteristic) {
+      console.error("❌ TX characteristic not found!");
+      return;
     }
 
-    await sendCommand("s");
-    isInitializingRef.current = false;
-    await new Promise((res) => setTimeout(res, 500));
+    try {
+        isInitializingRef.current = true;
+        console.log("Initializing device parameters...");
+        const padValue = (num: number): string => num < 10 ? "0" + num : num.toString();
+    
+        for (const { cmd, value } of initializationConfig) {
+          console.log(`Sending command '${cmd}'`);
+          const responsePromise = waitForDeviceResponse(cmd, 1000);
+          await sendCommand(cmd, padValue(value), "0");
+          await responsePromise;
+        }
+    
+        await sendCommand("s");
+        isInitializingRef.current = false;
+        await new Promise((res) => setTimeout(res, 500));
+
+    } catch (error) {
+        console.error("❌ Failed to initialize:", error);
+    }
   }
 
   //Helper for Washout Filter
@@ -344,16 +351,18 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     minCurrent: number,
     maxCurrent: number
   ) => {
-      console.log("Starting Stochastic Extremum Seeking (SES) Optimization...");
+      console.log("Starting SES Optimization...");
       setIsOptimizationRunning(true);
       isOptimizationRunningRef.current = true;
+      await startIMU();
+      await new Promise(res => setTimeout(res, 500)); // Delay to allow IMU data to populate
   
       // Start IMU if not already running
-      if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
+      //if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
           //console.log("📡 Starting IMU sensors before optimization...");
-          startIMU();
-          await new Promise(res => setTimeout(res, 1000)); // Delay to allow IMU data to populate
-      }
+          //startIMU();
+          //await new Promise(res => setTimeout(res, 500)); // Delay to allow IMU data to populate
+      //}
   
       // Generate unique pairs of electrodes (9 electrodes → 36 pairs)
       const electrodePairs: [number, number][] = [];
@@ -369,7 +378,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const qVariance = 0.7;
       const dt = 0.1;
       const numIterations = 50;
-      const h = 1.2;  // Washout filter parameter
+      const h = 2.5;  // Washout filter parameter
       const alpha = 0.1; // EMA smoothing factor
 
       let y_filtered = 0;  // Initialize washout filter
@@ -379,12 +388,10 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let bestPairStableThreshold = 5;
 
       const performanceMargin = 0.05;
-      const learningRate = 5;
-      const gradientThreshold = 0.3; // Minimum gradient magnitude to consider a pair sensitive (tune as needed)
-      const gradientWeight = 0.5;     // Weight factor for the gradient contribution in the score
-      const lockInPerformanceThreshold = 0.5; // Tune this based on your system
-      let lockInCandidate = false; // Flag to indicate if we've locked in on a candidate
-      const spatialWeight = 0.7; 
+      const learningRate = 25;
+      const gradientThreshold = 0.5; // Minimum gradient magnitude to consider a pair sensitive (tune as needed)
+      const gradientWeight = 0.7;     // Weight factor for the gradient contribution in the score
+      const spatialWeight = 0.5; 
   
       // === INITIALIZATION ===
       let currentPairIndex = Math.floor(Math.random() * numPairs);
@@ -393,6 +400,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let stabilityCounter = 0;
 
       const pairScores = new Array(numPairs).fill(0);
+      let bestScore = -Infinity;
       let bestPairIndex = currentPairIndex;
   
       console.log(`🎯 Starting with Pair: ${electrodePairs[currentPairIndex]}, Current: ${I_k}mA`);
@@ -404,14 +412,9 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
           // Perturb electrode pair index
           // If not locked in, perturb the electrode pair index; otherwise, lock in the best pair.
-          if (!lockInCandidate) {
-            let eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
-            let perturbedIndex = Math.floor(Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs)));
-            currentPairIndex = perturbedIndex;
-          } else {
-            // Once locked in, simply use the best pair index
-            currentPairIndex = bestPairIndex;
-          }
+          let eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
+          let perturbedIndex = Math.floor(Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs)));
+          currentPairIndex = perturbedIndex;
           let newPair = electrodePairs[currentPairIndex];
 
           // ✅ Immediately send the new pair to BLE
@@ -447,19 +450,16 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           let pairScore = y_filtered + gradientWeight * effectiveGradient + spatialWeight * spatialScore;
 
           // === Update Electrode Pair Performance Based on Combined Score ===
-          if (pairScore > pairScores[currentPairIndex] + performanceMargin) {
-            pairScores[currentPairIndex] = pairScore;
-            bestPairIndex = currentPairIndex;
-            stabilityCounter = 0;
-
-            // Optionally, lock in if performance is high enough
-            if (y_filtered >= lockInPerformanceThreshold) {
-              lockInCandidate = true;
+          if (pairScore >= bestScore - performanceMargin) {
+            // Update bestScore if this pair is truly better
+            if (pairScore > bestScore) {
+              bestScore = pairScore;
+              bestPairIndex = currentPairIndex;
             }
+            stabilityCounter++; // Increment counter because the best pair is still good
           } else {
-            stabilityCounter++;
+            stabilityCounter = 0; // Reset counter if performance dips
           }
-
           if (stabilityCounter >= bestPairStableThreshold) {
             console.log(`✅ Best pair determined: ${electrodePairs[bestPairIndex]}.`);
             await stopOptimizationLoop();
@@ -482,7 +482,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return;
           }
 
-          await new Promise(res => setTimeout(res, 800)); // delay 500ms before the next iteration
+          await new Promise(res => setTimeout(res, 700)); // delay 700ms before the next iteration
       }
       console.log(`Optimization Complete. Best Pair: ${electrodePairs[currentPairIndex]}, Final Current: ${I_k}mA`);
       await stopOptimizationLoop();
