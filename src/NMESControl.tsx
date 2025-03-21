@@ -25,6 +25,8 @@ const NMESControlPanel: React.FC = () => {
 
   const [isMeasuring, setIsMeasuring] = useState(false);
 
+  const [isInitializing, setIsInitializing] = useState(false);
+
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -113,12 +115,14 @@ const NMESControlPanel: React.FC = () => {
   }, [isOptimizationRunning]);
 
   const handleInitialize = async () => {
+    setIsInitializing(true);
     try {
       await initializeDevice();
       console.log("✅ Device initialization complete.");
     } catch (error) {
       console.error("❌ Device initialization failed:", error);
     }
+    setIsInitializing(false);
   };
 
   const handleStartOptimization = async () => {
@@ -203,12 +207,12 @@ const NMESControlPanel: React.FC = () => {
               </div>
 
               <div className={styles.buttonContainer} style={{ marginTop: "15px" }}>
-                <button 
-                  className={styles.button} 
-                  onClick={handleInitialize} 
-                  disabled={!isConnected}
+                <button
+                  className={styles.button}
+                  onClick={handleInitialize}
+                  disabled={!isConnected || isInitializing}
                 >
-                  Initialize Device
+                  {isInitializing ? "Initializing..." : "Initialize Device"}
                 </button>
               </div>
 
