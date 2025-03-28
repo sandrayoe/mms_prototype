@@ -38,7 +38,7 @@ const NMESControlPanel: React.FC = () => {
   const [bestCurrent, setBestCurrent] = useState<number | null>(null);
 
   const [minCurrent, setMinCurrent] = useState(3.0);
-  const [maxCurrent, setMaxCurrent] = useState(5.0);
+  const [maxCurrent, setMaxCurrent] = useState(15.0);
 
   const sampleCountRef = useRef(0);
 

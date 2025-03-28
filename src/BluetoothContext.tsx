@@ -321,6 +321,71 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return filteredValues;
     }
 
+    // --- Bandpass Filter Functions ---
+
+    /**
+     * First-order high-pass filter using the difference equation:
+     * y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+     * @param samples Array of sample values.
+     * @param cutoff Cutoff frequency.
+     * @param dt Sampling time interval.
+     * @returns Array of filtered sample values.
+     */
+    function applyHighPassFilter(samples: number[], cutoff: number, dt: number): number[] {
+      const RC: number = 1 / (2 * Math.PI * cutoff);
+      const alpha: number = RC / (RC + dt);
+      const filtered: number[] = [];
+      let previousFiltered: number = samples[0];
+      let previousSample: number = samples[0];
+      
+      for (let i = 0; i < samples.length; i++) {
+        const currentFiltered: number = alpha * (previousFiltered + samples[i] - previousSample);
+        filtered.push(currentFiltered);
+        previousFiltered = currentFiltered;
+        previousSample = samples[i];
+      }
+      return filtered;
+    }
+
+    /**
+     * First-order low-pass filter using the difference equation:
+     * y[n] = y[n-1] + alpha * (x[n] - y[n-1])
+     * @param samples Array of sample values.
+     * @param cutoff Cutoff frequency.
+     * @param dt Sampling time interval.
+     * @returns Array of filtered sample values.
+     */
+    function applyLowPassFilter(samples: number[], cutoff: number, dt: number): number[] {
+      const RC: number = 1 / (2 * Math.PI * cutoff);
+      const alpha: number = dt / (RC + dt);
+      const filtered: number[] = [];
+      let previousFiltered: number = samples[0];
+      
+      for (const sample of samples) {
+        const currentFiltered: number = previousFiltered + alpha * (sample - previousFiltered);
+        filtered.push(currentFiltered);
+        previousFiltered = currentFiltered;
+      }
+      return filtered;
+    }
+
+    /**
+     * Bandpass filter by cascading the high-pass and low-pass filters.
+     * 'lowCut' removes frequencies below the desired band,
+     * 'highCut' removes frequencies above the desired band.
+     * @param samples Array of sample values.
+     * @param lowCut Low cutoff frequency.
+     * @param highCut High cutoff frequency.
+     * @param dt Sampling time interval.
+     * @returns Array of bandpass filtered sample values.
+     */
+    function applyBandpassFilterToWindow(samples: number[], lowCut: number, highCut: number, dt: number): number[] {
+      const highPassed: number[] = applyHighPassFilter(samples, lowCut, dt);
+      const bandPassed: number[] = applyLowPassFilter(highPassed, highCut, dt);
+      return bandPassed;
+    }
+
+
     type Coordinate = [number, number];
 
     //3x3 grid format
@@ -374,11 +439,11 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const numPairs = electrodePairs.length;
   
       // === SES PARAMETERS ===
-      const lambdaDecay = 0.4;
+      const lambdaDecay = 0.3;
       const qVariance = 0.7;
       const dt = 0.1;
       const numIterations = 50;
-      const h = 2.5;  // Washout filter parameter
+      const h = 0.6;  // Washout filter parameter
       const alpha = 0.1; // EMA smoothing factor
 
       let y_filtered = 0;  // Initialize washout filter
@@ -387,11 +452,18 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   
       let bestPairStableThreshold = 5;
 
-      const performanceMargin = 0.05;
-      const learningRate = 25;
+      const learningRate = 5.5;
       const gradientThreshold = 0.5; // Minimum gradient magnitude to consider a pair sensitive (tune as needed)
-      const gradientWeight = 0.7;     // Weight factor for the gradient contribution in the score
-      const spatialWeight = 0.5; 
+      const gradientWeight = 0.8;     // Weight factor for the gradient contribution in the score
+      const spatialWeight = 0.3; 
+
+      // Constant for the random perturbation magnitude.
+      // The subtraction biases the random perturbation downward (toward lower currents).
+      const currentNoiseMagnitude = 0.7; // Adjust as needed
+
+      // Parameters to track zero pairScore occurrences
+      let zeroScoreCounter = 0;
+      const zeroScoreThreshold = 3; // If pairScore is 0 for 5 consecutive trials
   
       // === INITIALIZATION ===
       let currentPairIndex = Math.floor(Math.random() * numPairs);
@@ -400,7 +472,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let stabilityCounter = 0;
 
       const pairScores = new Array(numPairs).fill(0);
-      let bestScore = -Infinity;
+      let bestScore = 0;
       let bestPairIndex = currentPairIndex;
   
       console.log(`🎯 Starting with Pair: ${electrodePairs[currentPairIndex]}, Current: ${I_k}mA`);
@@ -411,7 +483,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           eta_ema = alpha * eta + (1 - alpha) * eta_ema;
 
           // Perturb electrode pair index
-          // If not locked in, perturb the electrode pair index; otherwise, lock in the best pair.
           let eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
           let perturbedIndex = Math.floor(Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs)));
           currentPairIndex = perturbedIndex;
@@ -423,12 +494,12 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           updateCurrentPair(newPair); 
 
           // === Measure muscle activation using IMU ===
-          const windowSize = 5;
+          const windowSize = 10;
           let recentIMU1 = imuData.imu1_changes.slice(-windowSize);
           let recentIMU2 = imuData.imu2_changes.slice(-windowSize);
           
-          let filteredIMU1 = applyWashoutFilterToWindow(recentIMU1, 0, h, dt, zeta);
-          let filteredIMU2 = applyWashoutFilterToWindow(recentIMU2, 0, h, dt, zeta);
+          let filteredIMU1 = applyBandpassFilterToWindow(recentIMU1, 0.8, 1.2, dt);
+          let filteredIMU2 = applyBandpassFilterToWindow(recentIMU2, 0.8, 1.2, dt);
           
           let avgFilteredIMU1 = filteredIMU1.length ? filteredIMU1.reduce((sum, val) => sum + val, 0) / filteredIMU1.length : 0;
           let avgFilteredIMU2 = filteredIMU2.length ? filteredIMU2.reduce((sum, val) => sum + val, 0) / filteredIMU2.length : 0;
@@ -441,37 +512,54 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
            // === Compute the Gradient Estimate and Combined Score ===
           let gradientEstimate = eta_ema * y_filtered;
           // Optionally, enforce a minimum gradient threshold:
-          let effectiveGradient = Math.abs(gradientEstimate) >= gradientThreshold ? Math.abs(gradientEstimate) : 0;
+          //let effectiveGradient = Math.abs(gradientEstimate) >= gradientThreshold ? Math.abs(gradientEstimate) : 0;
           // Spatial component:
           let distance = calculateDistance(newPair[0], newPair[1]);
           let spatialScore = 1 / (distance + 1);
 
-          // Combined score: activation performance + weighted gradient + weighted spatial proximity
-          let pairScore = y_filtered + gradientWeight * effectiveGradient + spatialWeight * spatialScore;
-
-          // === Update Electrode Pair Performance Based on Combined Score ===
-          if (pairScore >= bestScore - performanceMargin) {
-            // Update bestScore if this pair is truly better
-            if (pairScore > bestScore) {
-              bestScore = pairScore;
-              bestPairIndex = currentPairIndex;
-            }
-            stabilityCounter++; // Increment counter because the best pair is still good
-          } else {
-            stabilityCounter = 0; // Reset counter if performance dips
-          }
-          if (stabilityCounter >= bestPairStableThreshold) {
-            console.log(`✅ Best pair determined: ${electrodePairs[bestPairIndex]}.`);
-            await stopOptimizationLoop();
-            updateBestPair(electrodePairs[bestPairIndex]);
-            updateBestCurrent(I_k);
-            return;
-          }
-
-          // === Update Current Using Gradient Estimate ===
-          I_k = Math.min(maxCurrent, Math.max(minCurrent, I_k + learningRate * gradientEstimate));
-          I_k = Math.round(I_k); // Ensure current is an integer
+          // === Update Current Using Gradient Estimate and Random Perturbation with Bias ===
+          // Generate a random perturbation that is biased downward:
+          const randomPerturbation = (Math.random() - 0.75) * currentNoiseMagnitude;
+          I_k = I_k + learningRate * gradientEstimate + randomPerturbation;
+          I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k))); // Clamp and round current
           updateCurrentValue(I_k);
+
+          // Combined score: activation performance + weighted gradient + weighted spatial proximity
+          let pairScore = y_filtered + spatialWeight * spatialScore;
+
+           // --- Handling Zero pairScore ---
+            if (pairScore <= 0.5) {
+              zeroScoreCounter++;
+              // If we get too many consecutive zero scores, force an increment in current
+              if (zeroScoreCounter >= zeroScoreThreshold) {
+                I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k + 1)));
+                updateCurrentValue(I_k);
+                console.log(`⚡ Incrementing current: ${I_k}mA`);
+                zeroScoreCounter = 0; // Reset counter after forcing an increment
+              }
+              // Do not update bestScore or stabilityCounter when pairScore is 0
+            } else {
+              // Reset zeroScore counter if we get a non-zero pairScore
+              zeroScoreCounter = 0;
+              // === Update Electrode Pair Performance Based on Combined Score ===
+              if (pairScore >= bestScore) {
+                if (pairScore > bestScore) {
+                  bestScore = pairScore;
+                  bestPairIndex = currentPairIndex;
+                }
+                stabilityCounter++; // Increment counter because the best pair is still good
+              } else {
+                stabilityCounter = 0; // Reset counter if performance dips
+              }
+            }
+
+            if (stabilityCounter >= bestPairStableThreshold) {
+              console.log(`✅ Best pair determined: ${electrodePairs[bestPairIndex]}.`);
+              await stopOptimizationLoop();
+              updateBestPair(electrodePairs[bestPairIndex]);
+              updateBestCurrent(I_k);
+              return;
+            }
 
           // === Stopping Conditions ===
           if (I_k - 1 >= maxCurrent) {
@@ -482,7 +570,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return;
           }
 
-          await new Promise(res => setTimeout(res, 700)); // delay 700ms before the next iteration
+          await new Promise(res => setTimeout(res, 700)); // delay 500ms before the next iteration
       }
       console.log(`Optimization Complete. Best Pair: ${electrodePairs[currentPairIndex]}, Final Current: ${I_k}mA`);
       await stopOptimizationLoop();
