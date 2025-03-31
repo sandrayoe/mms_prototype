@@ -42,15 +42,6 @@ const NMESControlPanel: React.FC = () => {
 
   const sampleCountRef = useRef(0);
 
-  // Washout Filter Parameters
-  const h = 0.6; // Washout filter gain (higher removes more slow variations)
-  const dt = 0.1; // Sampling time (100ms)
-
-  // Initialize washout filtered values
-  let washoutSensor1 = 0;
-  let washoutSensor2 = 0;
-  let zeta = 0; // Assume baseline IMU response is zero (can be adjusted if needed)
-
   // Update sensor values and apply EMA
   useEffect(() => {
     if (isConnected && isMeasuring) {
@@ -60,10 +51,6 @@ const NMESControlPanel: React.FC = () => {
         let rawSensor1 = imuData.imu1_changes.length > 0 ? imuData.imu1_changes[imuData.imu1_changes.length - 1] : 0;
         let rawSensor2 = imuData.imu2_changes.length > 0 ? imuData.imu2_changes[imuData.imu2_changes.length - 1] : 0;
 
-        // Apply Washout Filter
-        washoutSensor1 = (1 - Math.exp(-h * dt)) * (rawSensor1 - zeta) + Math.exp(-h * dt) * washoutSensor1;
-        washoutSensor2 = (1 - Math.exp(-h * dt)) * (rawSensor2 - zeta) + Math.exp(-h * dt) * washoutSensor2;
-
         setSensor1Data((prevData) => [
           ...prevData.slice(-99), 
           { time: sampleCountRef.current, sensorValue: rawSensor1 }
@@ -72,16 +59,6 @@ const NMESControlPanel: React.FC = () => {
         setSensor2Data((prevData) => [
           ...prevData.slice(-99), 
           { time: sampleCountRef.current, sensorValue: rawSensor2 }
-        ]);
-
-        setWashoutSensor1Data((prevData) => [
-          ...prevData.slice(-99),
-          { time: sampleCountRef.current, sensorValue: washoutSensor1 }
-        ]);
-
-        setWashoutSensor2Data((prevData) => [
-          ...prevData.slice(-99),
-          { time: sampleCountRef.current, sensorValue: washoutSensor2 }
         ]);
 
       }, 100); // Update every 100ms
@@ -293,7 +270,6 @@ const NMESControlPanel: React.FC = () => {
                   <Tooltip />
                   <Legend />
                   <Line type="monotone" dataKey="sensorValue" stroke="#8884d8" strokeWidth={2} name="Raw Sensor 1" />
-                  <Line type="monotone" data={washoutSensor1Data} dataKey="sensorValue" stroke="#ff7300" strokeWidth={2} name="Filtered Sensor 1" />
                 </LineChart>
               </div>
 
@@ -306,7 +282,6 @@ const NMESControlPanel: React.FC = () => {
                   <Tooltip />
                   <Legend />
                   <Line type="monotone" dataKey="sensorValue" stroke="#82ca9d" strokeWidth={2} name="Raw Sensor 2" />
-                  <Line type="monotone" data={washoutSensor2Data} dataKey="sensorValue" stroke="#ff0000" strokeWidth={2} name="Filtered Sensor 2" />
                 </LineChart>
             </div>
           </div>

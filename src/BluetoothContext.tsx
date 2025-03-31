@@ -423,10 +423,9 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let eta_ema = 0;  // Initialize EMA for perturbation
       let zeta = 0;  // Assume baseline IMU response is zero
   
-      let bestPairStableThreshold = 5;
+      let bestPairStableThreshold = 3;
 
       const learningRate = 5.5;
-      const gradientThreshold = 0.5; // Minimum gradient magnitude to consider a pair sensitive (tune as needed)
       const gradientWeight = 0.8;     // Weight factor for the gradient contribution in the score
 
       // Constant for the random perturbation magnitude.
@@ -494,15 +493,16 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k))); // Clamp and round current
           updateCurrentValue(I_k);
 
-          // Combined score: activation performance + weighted gradient 
-          let pairScore = newActivation; 
+          // Combined score: activation performance + weighted gradient
+          //let pairScore = newActivation 
+          let pairScore = y_filtered + gradientWeight * Math.abs(gradientEstimate); 
 
           console.log(`Pair Score: ${pairScore.toFixed(3)} | y_filtered: ${y_filtered.toFixed(3)}`);
 
            // --- Handling Zero pairScore ---
-            if (pairScore <= 1.0) {
+            if (pairScore <= 0.5) {
               zeroScoreCounter++;
-              // If we get too many consecutive zero scores, force an increment in current
+              // If we get too many consecutive <0.5 scores, force an increment in current
               if (zeroScoreCounter >= zeroScoreThreshold) {
                 I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k + 1)));
                 updateCurrentValue(I_k);
