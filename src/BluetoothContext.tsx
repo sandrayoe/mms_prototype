@@ -426,7 +426,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let bestPairStableThreshold = 3;
 
       const learningRate = 5.5;
-      const gradientWeight = 0.8;     // Weight factor for the gradient contribution in the score
+      const gradientWeight = 0.5;     // Weight factor for the gradient contribution in the score
 
       // Constant for the random perturbation magnitude.
       // The subtraction biases the random perturbation downward (toward lower currents).
