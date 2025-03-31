@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useRef } from "react";
+import React, { createContext, useState, useContext, useRef, useEffect } from "react";
 
 // Define the Bluetooth context and its type
 interface BluetoothContextType {
@@ -44,14 +44,16 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     imu1_changes: [],
     imu2_changes: []
   });
-
+  const imuDataRef = useRef(imuData);
+  useEffect(() => {
+    imuDataRef.current = imuData;
+  }, [imuData]);
 
   // Bluetooth service & characteristic UUIDs
   const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"; // Nordic UART Service
   const RX_CHARACTERISTIC_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Write characteristic (Send)
   const TX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Notify characteristic (Receive)
 
-  // Restore Bluetooth Functions
   const connect = async (): Promise<void> => {
     try {
       const selectedDevice = await navigator.bluetooth.requestDevice({
@@ -118,9 +120,8 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsConnected(false);
     setDevice(null);
   };
-
-  // idle value for IMU
-  const IDLE_VALUE = 2048;  
+  
+  const IDLE_VALUE = 2048;  // idle value for IMU
   let pendingResolve: ((data: string) => void) | null = null;
 
   const handleCommandResponse = (message: string) => {
@@ -131,6 +132,8 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         resolver(message);
     }
   };
+
+  const maxHistory = 500; // max history for the IMU data
 
   const handleIMUData = (rawBytes: Uint8Array) => {
 
@@ -150,8 +153,11 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           sensor1Changes.push(sensor1Delta);
           sensor2Changes.push(sensor2Delta);
     }
-    // ✅ Update IMU state separately
-    setImuData({ imu1_changes: sensor1Changes, imu2_changes: sensor2Changes });
+    // Update IMU state separately
+    setImuData(prev => ({
+      imu1_changes: [...prev.imu1_changes, ...sensor1Changes].slice(-maxHistory),
+      imu2_changes: [...prev.imu2_changes, ...sensor2Changes].slice(-maxHistory)
+    }));
 
     } catch (error) {
       console.error("❌ Error processing IMU data:", error);
@@ -222,25 +228,22 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const commandBytes = new Uint8Array(
         args.flatMap(arg =>
             typeof arg === "number"
-                ? [arg & 0xFF] // ✅ Send number as a raw byte
+                ? [arg & 0xFF] // Send number as a raw byte
                 : typeof arg === "string"
                 ? arg.split("").map(char => char.charCodeAt(0)) // Convert string to ASCII
                 : []
         )
     );
-
     //console.log(`📤 Sending Command as Raw Bytes:`, commandBytes);
     await rxCharacteristic.writeValue(commandBytes);
 };
 
 
-
-
-
   const stopStimulation = async () => {
-    await sendCommand("e", "0", "0", "0", "0", "0");
+    await sendCommand("e", "0", "0", "0", "0", "0"); //command to stop the stimulation in CU
   };
 
+  // extra function for the response if there are some parameters' changes in CU
   function waitForDeviceResponse(expectedCmd: string, delay: number = 1000): Promise<string> {
     return new Promise((resolve) => {
         const expected = expectedCmd.trim().toLowerCase();
@@ -265,8 +268,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }
 
-  
-
   const initializationConfig = [
     { cmd: "f", value: 35 },  // frequency
     { cmd: "d", value: 7 }, // phase duration
@@ -276,6 +277,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     { cmd: "R", value: 0 }    // ramp-down time
   ];
 
+  // Initialize device parameters (that need to be set)
   const initializeDevice = async() =>{
 
     if (!txCharacteristic) {
@@ -384,28 +386,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const bandPassed: number[] = applyLowPassFilter(highPassed, highCut, dt);
       return bandPassed;
     }
-
-
-    type Coordinate = [number, number];
-
-    //3x3 grid format
-    const electrodeCoordinates: Record<number, Coordinate> = {
-      1: [0, 0],
-      2: [1, 0],
-      3: [2, 0],
-      4: [0, 1],
-      5: [1, 1],
-      6: [2, 1],
-      7: [0, 2],
-      8: [1, 2],
-      9: [2, 2]
-    };
-    
-    function calculateDistance(e1: number, e2: number): number {
-      const [x1, y1] = electrodeCoordinates[e1];
-      const [x2, y2] = electrodeCoordinates[e2];
-      return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
-    }
     
 
   const runOptimizationLoop = async (
@@ -422,13 +402,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await startIMU();
       await new Promise(res => setTimeout(res, 500)); // Delay to allow IMU data to populate
   
-      // Start IMU if not already running
-      //if (imuData.imu1_changes.length === 0 && imuData.imu2_changes.length === 0) {
-          //console.log("📡 Starting IMU sensors before optimization...");
-          //startIMU();
-          //await new Promise(res => setTimeout(res, 500)); // Delay to allow IMU data to populate
-      //}
-  
       // Generate unique pairs of electrodes (9 electrodes → 36 pairs)
       const electrodePairs: [number, number][] = [];
       for (let i = 1; i <= 9; i++) {
@@ -439,10 +412,10 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const numPairs = electrodePairs.length;
   
       // === SES PARAMETERS ===
-      const lambdaDecay = 0.3;
+      const lambdaDecay = 0.2;
       const qVariance = 0.7;
       const dt = 0.1;
-      const numIterations = 50;
+      const numIterations = 150;
       const h = 0.6;  // Washout filter parameter
       const alpha = 0.1; // EMA smoothing factor
 
@@ -455,7 +428,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const learningRate = 5.5;
       const gradientThreshold = 0.5; // Minimum gradient magnitude to consider a pair sensitive (tune as needed)
       const gradientWeight = 0.8;     // Weight factor for the gradient contribution in the score
-      const spatialWeight = 0.3; 
 
       // Constant for the random perturbation magnitude.
       // The subtraction biases the random perturbation downward (toward lower currents).
@@ -463,7 +435,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       // Parameters to track zero pairScore occurrences
       let zeroScoreCounter = 0;
-      const zeroScoreThreshold = 3; // If pairScore is 0 for 5 consecutive trials
+      const zeroScoreThreshold = 5; // If pairScore is 0 for 5 consecutive trials
   
       // === INITIALIZATION ===
       let currentPairIndex = Math.floor(Math.random() * numPairs);
@@ -495,8 +467,11 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
           // === Measure muscle activation using IMU ===
           const windowSize = 10;
-          let recentIMU1 = imuData.imu1_changes.slice(-windowSize);
-          let recentIMU2 = imuData.imu2_changes.slice(-windowSize);
+          let recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
+          let recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
+
+          //console.log("IMU1 raw:", recentIMU1);
+          //console.log("IMU2 raw:", recentIMU2);
           
           let filteredIMU1 = applyBandpassFilterToWindow(recentIMU1, 0.8, 1.2, dt);
           let filteredIMU2 = applyBandpassFilterToWindow(recentIMU2, 0.8, 1.2, dt);
@@ -511,11 +486,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   
            // === Compute the Gradient Estimate and Combined Score ===
           let gradientEstimate = eta_ema * y_filtered;
-          // Optionally, enforce a minimum gradient threshold:
-          //let effectiveGradient = Math.abs(gradientEstimate) >= gradientThreshold ? Math.abs(gradientEstimate) : 0;
-          // Spatial component:
-          let distance = calculateDistance(newPair[0], newPair[1]);
-          let spatialScore = 1 / (distance + 1);
 
           // === Update Current Using Gradient Estimate and Random Perturbation with Bias ===
           // Generate a random perturbation that is biased downward:
@@ -524,11 +494,13 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k))); // Clamp and round current
           updateCurrentValue(I_k);
 
-          // Combined score: activation performance + weighted gradient + weighted spatial proximity
-          let pairScore = y_filtered + spatialWeight * spatialScore;
+          // Combined score: activation performance + weighted gradient 
+          let pairScore = newActivation; 
+
+          console.log(`Pair Score: ${pairScore.toFixed(3)} | y_filtered: ${y_filtered.toFixed(3)}`);
 
            // --- Handling Zero pairScore ---
-            if (pairScore <= 0.5) {
+            if (pairScore <= 1.0) {
               zeroScoreCounter++;
               // If we get too many consecutive zero scores, force an increment in current
               if (zeroScoreCounter >= zeroScoreThreshold) {
@@ -576,15 +548,13 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await stopOptimizationLoop();
       updateBestPair(electrodePairs[currentPairIndex]);
       updateBestCurrent(I_k); 
-  }; 
-  
+  };  
   
     const stopOptimizationLoop = async () => {
         isOptimizationRunningRef.current = false; 
         setIsOptimizationRunning(false);
         await stopStimulation();
-    };
-    
+    }; 
 
   return (
     <BluetoothContext.Provider value={{

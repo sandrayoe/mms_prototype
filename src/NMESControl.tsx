@@ -43,7 +43,7 @@ const NMESControlPanel: React.FC = () => {
   const sampleCountRef = useRef(0);
 
   // Washout Filter Parameters
-  const h = 1.2; // Washout filter gain (higher removes more slow variations)
+  const h = 0.6; // Washout filter gain (higher removes more slow variations)
   const dt = 0.1; // Sampling time (100ms)
 
   // Initialize washout filtered values
@@ -289,7 +289,7 @@ const NMESControlPanel: React.FC = () => {
                 <LineChart width={600} height={200} data={sensor1Data}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="time" />
-                  <YAxis domain={[0, "auto"]} />
+                  <YAxis domain={[0, 10]} />
                   <Tooltip />
                   <Legend />
                   <Line type="monotone" dataKey="sensorValue" stroke="#8884d8" strokeWidth={2} name="Raw Sensor 1" />
@@ -302,7 +302,7 @@ const NMESControlPanel: React.FC = () => {
                 <LineChart width={600} height={200} data={sensor2Data}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="time" />
-                  <YAxis domain={[0, "auto"]} />
+                  <YAxis domain={[0, 10]} />
                   <Tooltip />
                   <Legend />
                   <Line type="monotone" dataKey="sensorValue" stroke="#82ca9d" strokeWidth={2} name="Raw Sensor 2" />
