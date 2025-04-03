@@ -53,31 +53,44 @@
 }
 
 .statusBox,
-.electrodeBox,
-.intensityBox {
-  background-color: #f3f4f6;
-  padding: 1rem;
+.electrodeBox {
+  background: #f8f8f8;
+  padding: 15px;
   border-radius: 8px;
-  background: #f3f4f6;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  max-width: 600px;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px; /* ✅ Increased gap between lines */
 }
 
-.valueBox {
-  font-size: 1.2rem;
+.electrodeBox div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 1rem;
+  font-weight: 500;
+  margin-bottom: 8px; /* ✅ Increased spacing */
+}
+
+/* ✅ Remove background highlight for Current Pair & Current (mA) */
+.electrodeBox span {
   font-weight: bold;
-  padding: 0.1rem 0.5rem;
-  border-radius: 0.3rem;
+  color: #333;
 }
 
-.blue {
-  background-color: #3b82f6;
-  color: white;
+/* ✅ Keep green highlight for Best Pair */
+.valueBox {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
 }
 
-.orange {
-  background-color: #fb923c;
-  color: white;
+/* ✅ Keep best pair & best current highlighted */
+.green {
+  background: #d4edda;
+  color: #155724;
 }
 
 .contentContainer {
@@ -113,3 +126,26 @@
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   width: 100%;
 }
+
+.topContainer {
+  display: flex;
+  justify-content: start;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.controlBox {
+  background: #f3f4f6;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column; /* Stack Min and Max Current vertically */
+  gap: 10px; /* ✅ Adds spacing between Min and Max Current inputs */
+  margin-bottom: 20px; /* ✅ Adds spacing before the Start Optimization button */
+}
+

@@ -1,140 +1,288 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useBluetooth } from "./BluetoothContext";
 import BluetoothControl from "./BluetoothControl";
 import styles from "./NMESControlPanel.module.css";
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from "recharts";
 
 const NMESControlPanel: React.FC = () => {
-  const { isConnected } = useBluetooth();
-  const [sensor1Data, setSensor1Data] = useState([{ time: Date.now(), sensorValue: 0 }]);
-  const [sensor2Data, setSensor2Data] = useState([{ time: Date.now(), sensorValue: 0 }]);
-  const [minCurrent, setMinCurrent] = useState(1);
-  const [maxCurrent, setMaxCurrent] = useState(15);
-  const [isRunning, setIsRunning] = useState(false);
+  const { 
+    isConnected, 
+    runOptimizationLoop, 
+    imuData, 
+    startIMU, 
+    stopIMU, 
+    stopOptimizationLoop, 
+    isOptimizationRunning,
+    initializeDevice 
+  } = useBluetooth();
+
+  const [sensor1Data, setSensor1Data] = useState<{ time: number; sensorValue: number }[]>([]);
+  const [sensor2Data, setSensor2Data] = useState<{ time: number; sensorValue: number }[]>([]);
+
+  // State for Washout Filtered IMU Data
+  const [washoutSensor1Data, setWashoutSensor1Data] = useState<{ time: number; sensorValue: number }[]>([]);
+  const [washoutSensor2Data, setWashoutSensor2Data] = useState<{ time: number; sensorValue: number }[]>([]);
+
+  const [isMeasuring, setIsMeasuring] = useState(false);
+
+  const [isInitializing, setIsInitializing] = useState(false);
+
   const [elapsedTime, setElapsedTime] = useState(0);
+  const startTimeRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
+  const [currentPair, setCurrentPair] = useState<[number, number] | null>(null);
+  const [bestPair, setBestPair] = useState<[number, number] | null>(null);
 
+  const [currentBeingTested, setCurrentBeingTested] = useState<number | null>(null);
+  const [bestCurrent, setBestCurrent] = useState<number | null>(null);
 
+  const [minCurrent, setMinCurrent] = useState(1.0);
+  const [maxCurrent, setMaxCurrent] = useState(12.0);
+
+  const sampleCountRef = useRef(0);
+
+  // Update sensor values and apply EMA
   useEffect(() => {
-    if (isConnected) {
+    if (isConnected && isMeasuring) {
       const interval = setInterval(() => {
-        const time = Date.now();
-        setSensor1Data((prevData) => [...prevData.slice(-49), { time, sensorValue: Math.random() * 100 }]);
-        setSensor2Data((prevData) => [...prevData.slice(-49), { time, sensorValue: Math.random() * 100 }]);
-      }, 1000);
+        sampleCountRef.current++;
+
+        let rawSensor1 = imuData.imu1_changes.length > 0 ? imuData.imu1_changes[imuData.imu1_changes.length - 1] : 0;
+        let rawSensor2 = imuData.imu2_changes.length > 0 ? imuData.imu2_changes[imuData.imu2_changes.length - 1] : 0;
+
+        setSensor1Data((prevData) => [
+          ...prevData.slice(-99), 
+          { time: sampleCountRef.current, sensorValue: rawSensor1 }
+        ]);
+
+        setSensor2Data((prevData) => [
+          ...prevData.slice(-99), 
+          { time: sampleCountRef.current, sensorValue: rawSensor2 }
+        ]);
+
+      }, 100); // Update every 100ms
 
       return () => clearInterval(interval);
     }
-  }, [isConnected]);
+  }, [isConnected, isMeasuring, imuData]);
 
+  // Timer for elapsed time during optimization
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    if (isRunning) {
-      timer = setInterval(() => {
-        setElapsedTime((prevTime) => prevTime + 1);
-      }, 1000);
-    } else if (timer) {
-      clearInterval(timer);
+    if (isOptimizationRunning) {
+        startTimeRef.current = performance.now(); // ✅ Store start time
+        const updateElapsedTime = () => {
+            if (!isOptimizationRunning) return;
+            const now = performance.now();
+            setElapsedTime(now - (startTimeRef.current ?? now)); // ✅ Calculate precise time
+            animationFrameRef.current = requestAnimationFrame(updateElapsedTime);
+        };
+        animationFrameRef.current = requestAnimationFrame(updateElapsedTime);
+    } else {
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+        }
     }
+
     return () => {
-      if (timer) clearInterval(timer);
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+        }
     };
-  }, [isRunning]);
+  }, [isOptimizationRunning]);
 
-  const handleStart = () => {
-    setIsRunning(true);
-    setElapsedTime(0);
+  const handleInitialize = async () => {
+    setIsInitializing(true);
+    try {
+      await initializeDevice();
+      console.log("✅ Device initialization complete.");
+    } catch (error) {
+      console.error("❌ Device initialization failed:", error);
+    }
+    setIsInitializing(false);
   };
 
-  const handleStop = () => {
-    setIsRunning(false);
+  const handleStartOptimization = async () => {
+      console.log("🟢 Starting optimization...");
+      if (!isMeasuring) {
+        handleStartIMU(); 
+        await new Promise(res => setTimeout(res, 500)); // Ensure IMU starts before sending commands
+      }
+      setElapsedTime(0);
+      setBestPair(null);
+      setCurrentPair(null);
+      setBestCurrent(null);
+      setCurrentBeingTested(null);
+
+      await runOptimizationLoop(
+        (pair) => setCurrentPair(pair),
+        (pair) => {setBestPair(pair); handleStopIMU();},
+        (current) => setCurrentBeingTested(current),
+        (current) => setBestCurrent(current),
+        minCurrent,
+        maxCurrent
+      );
+    };
+  
+  const handleStopOptimization = async () => {
+      console.log("🛑 Stopping optimization...");
+      await stopOptimizationLoop(); 
+      handleStopIMU();
   };
+
+  const handleStartIMU = () => {
+    setIsMeasuring(true);
+    startIMU();
+    setSensor1Data([]);
+    setSensor2Data([]);
+    setWashoutSensor1Data([]);
+    setWashoutSensor2Data([]);
+  };
+
+  const handleStopIMU = () => {
+    setIsMeasuring(false);
+    stopIMU();
+  };
+
 
   return (
     <div className={styles.container}>
-    <div className={styles.header}>
-      <img src="/mms_logo_2.png" alt="App Logo" className={styles.logo} />
-      <h1 className={styles.heading}>MMS - For Trial Only</h1>
-    </div>
-
-    <div className={styles.topContainer}>
-      <div className={styles.buttonContainer}>
-        <BluetoothControl />
+      <div className={styles.header}>
+        <img src="/mms_logo_2.png" alt="App Logo" className={styles.logo} />
+        <h1 className={styles.heading}>MMS - NMES Optimization</h1>
       </div>
-      {isConnected && (
-        <div className={styles.controlBox}>
-          <h2>Search Algorithm Control</h2>
-          <button className={styles.button} onClick={handleStart}>Start</button>
-          <button className={styles.button} onClick={handleStop}>Stop</button>
-          <p>Elapsed Time: {elapsedTime} seconds</p>
+
+      <div className={styles.topContainer}>
+        <div className={styles.buttonContainer}>
+          <BluetoothControl />
         </div>
-      )}
-    </div>
+
+        {isConnected && (
+          <div className={styles.controlBox}>
+              <h2>Search Algorithm & Sensor Control</h2>
+
+              <div className={styles.inputGroup}>
+                <div className={styles.inputContainer}>
+                  <label>Min Current (mA): </label>
+                  <input
+                    type="number"
+                    value={minCurrent}
+                    onChange={(e) => setMinCurrent(parseFloat(e.target.value))}
+                    step="0.1"
+                  />
+                </div>
+
+                <div className={styles.inputContainer}>
+                  <label>Max Current (mA): </label>
+                  <input
+                    type="number"
+                    value={maxCurrent}
+                    onChange={(e) => setMaxCurrent(parseFloat(e.target.value))}
+                    step="0.1"
+                  />
+                </div>
+              </div>
+
+              <div className={styles.buttonContainer} style={{ marginTop: "15px" }}>
+                <button
+                  className={styles.button}
+                  onClick={handleInitialize}
+                  disabled={!isConnected || isInitializing}
+                >
+                  {isInitializing ? "Initializing..." : "Initialize Device"}
+                </button>
+              </div>
+
+
+              <div className={styles.buttonContainer} style={{ marginTop: "15px" }}>
+              <button 
+                      className={styles.button} 
+                      onClick={handleStartOptimization} 
+                      disabled={isOptimizationRunning} 
+              >
+                      Start Optimization
+                  </button>
+
+                  <button 
+                      className={styles.button} 
+                      onClick={handleStopOptimization} 
+                      disabled={!isOptimizationRunning} 
+                  >
+                      Stop Optimization
+                  </button>
+              </div>
+
+              <p>Elapsed Time: {(elapsedTime / 1000).toFixed(3)} seconds</p> 
+
+              <div className={styles.buttonContainer}>
+                <button className={styles.button} onClick={handleStartIMU} disabled={!isConnected || isMeasuring}>
+                  Start Sensor(s)
+                </button>
+                <button className={styles.button} onClick={handleStopIMU} disabled={!isConnected || !isMeasuring}>
+                  Stop Sensor(s)
+                </button>
+              </div>
+          </div> 
+      )} 
+
+      </div> {/* ✅ Close topContainer here before moving to next section */}
 
       {isConnected && (
         <div className={styles.contentContainer}>
           <div className={styles.leftPanel}>
             <div className={styles.electrodeBox}>
-              <h2>Electrode Pair Selection</h2>
-              <p>Optimized pair will be displayed here after processing.</p>
+              <h2>Electrode Pair & Current</h2>
+              <p>Pair and current being tested.</p>
               <div>
-                <span>Pair: </span>
-                <span className={`${styles.valueBox} ${styles.blue}`}>(3,5)</span>
+                <span>Current Pair: </span>
+                <span className={`${styles.valueBox}`}>
+                  {currentPair ? `(${currentPair[0]}, ${currentPair[1]})` : "Waiting..."}
+                </span>
               </div>
-            </div>
-
-            <div className={styles.intensityBox}>
-              <h2>Current Intensity</h2>
-              <p>Current applied to electrodes.</p>
               <div>
-                <span>Current: </span>
-                <span className={`${styles.valueBox} ${styles.orange}`}>8.0 mA</span>
+                <span>Current (mA): </span>
+                <span className={`${styles.valueBox}`}>
+                  {currentBeingTested !== null ? `${currentBeingTested} mA` : "Waiting..."}
+                </span>
               </div>
-              <div style={{ marginTop: "1rem" }}></div>
-              <div className={styles.inputContainer}>
-                <label>Min Current (mA): </label>
-                <input
-                  type="number"
-                  value={minCurrent}
-                  onChange={(e) => setMinCurrent(Number(e.target.value))}
-                  className={styles.inputBox}
-                />
+              <div>
+                <span>Best Pair: </span>
+                <span className={`${styles.valueBox} ${styles.green}`}>
+                  {bestPair ? `(${bestPair[0]}, ${bestPair[1]})` : "Searching..."}
+                </span>
               </div>
-              <div className={styles.inputContainer}>
-                <label>Max Current (mA): </label>
-                <input
-                  type="number"
-                  value={maxCurrent}
-                  onChange={(e) => setMaxCurrent(Number(e.target.value))}
-                  className={styles.inputBox}
-                />
+              <div>
+                <span>Last Current (mA): </span>
+                <span className={`${styles.valueBox} ${styles.green}`}>
+                  {bestCurrent !== null ? `${bestCurrent} mA` : "Searching..."}
+                </span>
               </div>
             </div>
           </div>
 
           <div className={styles.rightPanel}>
             <div className={styles.chartContainer}>
-              <h3>Sensor 1 Readings</h3>
-              <LineChart width={600} height={200} data={sensor1Data}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tickFormatter={(time) => new Date(time).toLocaleTimeString()} />
-                <YAxis domain={[0, 100]} />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="sensorValue" stroke="#8884d8" strokeWidth={2} />
-              </LineChart>
-            </div>
+                <h3>Sensor 1 Readings </h3>
+                <LineChart width={600} height={200} data={sensor1Data}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" />
+                  <YAxis domain={[0, 10]} />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="sensorValue" stroke="#8884d8" strokeWidth={2} name="Raw Sensor 1" />
+                </LineChart>
+              </div>
 
-            <div className={styles.chartContainer}>
-              <h3>Sensor 2 Readings</h3>
-              <LineChart width={600} height={200} data={sensor2Data}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tickFormatter={(time) => new Date(time).toLocaleTimeString()} />
-                <YAxis domain={[0, 100]} />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="sensorValue" stroke="#82ca9d" strokeWidth={2} />
-              </LineChart>
+              <div className={styles.chartContainer}>
+                <h3>Sensor 2 Readings </h3>
+                <LineChart width={600} height={200} data={sensor2Data}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" />
+                  <YAxis domain={[0, 10]} />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="sensorValue" stroke="#82ca9d" strokeWidth={2} name="Raw Sensor 2" />
+                </LineChart>
             </div>
           </div>
         </div>
@@ -144,3 +292,8 @@ const NMESControlPanel: React.FC = () => {
 };
 
 export default NMESControlPanel;
+
+
+
+
+
