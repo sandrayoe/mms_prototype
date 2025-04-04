@@ -387,6 +387,41 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return bandPassed;
     }
 
+    // Helper function to calculate SNR (in dB) from an array of numbers
+    const calculateSNR = (signal: number[]): number => {
+      const signalPower = signal.reduce((sum, val) => sum + val * val, 0) / signal.length;
+      const mean = signal.reduce((sum, val) => sum + val, 0) / signal.length;
+      const noisePower = signal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / signal.length;
+      if (noisePower === 0) return 0;
+      return 10 * Math.log10(signalPower / noisePower);
+    };
+
+    const calculateSNROfDerivative = (signal: number[]): number => {
+      // If there's not enough data to compute a derivative, return 0
+      if (signal.length < 2) return 0;
+    
+      // Compute the first derivative of the signal
+      const derivative: number[] = [];
+      for (let i = 1; i < signal.length; i++) {
+        derivative.push(signal[i] - signal[i - 1]);
+      }
+    
+      // Calculate the signal power of the derivative
+      const signalPower = derivative.reduce((sum, val) => sum + val * val, 0) / derivative.length;
+      
+      // Calculate the mean of the derivative
+      const mean = derivative.reduce((sum, val) => sum + val, 0) / derivative.length;
+      
+      // Calculate the noise power as the variance of the derivative
+      const noisePower = derivative.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / derivative.length;
+      
+      // Handle the case when noisePower is 0
+      if (noisePower === 0) return 0;
+      
+      return 10 * Math.log10(signalPower / noisePower);
+    };
+    
+
     // Helper function to create a combined electrode stats tracker
     interface ElectrodeStats {
       usage: number;
@@ -453,8 +488,8 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   
       // === SES PARAMETERS ===
       const lambdaDecay = 0.3;
-      const qVariance = 0.7;
-      const dt = 0.1;
+      const qVariance = 0.8;
+      const dt = 0.01;
       const numIterations = 120; //Max Iterations
       const h = 0.6;  // Washout filter parameter
       const alpha = 0.1; // EMA smoothing factor
@@ -500,27 +535,31 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           updateCurrentPair(newPair); 
 
           // === Measure muscle activation using IMU ===
-          const windowSize = 10;
+          const windowSize = 20;
           let recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
           let recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
 
           //console.log("IMU1 raw:", recentIMU1);
           //console.log("IMU2 raw:", recentIMU2);
           
-          let filteredIMU1 = applyBandpassFilterToWindow(recentIMU1, 0.8, 1.2, dt);
-          let filteredIMU2 = applyBandpassFilterToWindow(recentIMU2, 0.8, 1.2, dt);
+          let filteredIMU1 = applyBandpassFilterToWindow(recentIMU1, 0.1, 2.0, dt);
+          let filteredIMU2 = applyBandpassFilterToWindow(recentIMU2, 0.1, 2.0, dt);
           
-          let avgFilteredIMU1 = filteredIMU1.length ? filteredIMU1.reduce((sum, val) => sum + val, 0) / filteredIMU1.length : 0;
-          let avgFilteredIMU2 = filteredIMU2.length ? filteredIMU2.reduce((sum, val) => sum + val, 0) / filteredIMU2.length : 0;
-          
-          let newActivation = Math.max(Math.abs(avgFilteredIMU1), Math.abs(avgFilteredIMU2));
+          //let avgFilteredIMU1 = filteredIMU1.length ? filteredIMU1.reduce((sum, val) => sum + val, 0) / filteredIMU1.length : 0;
+          //let avgFilteredIMU2 = filteredIMU2.length ? filteredIMU2.reduce((sum, val) => sum + val, 0) / filteredIMU2.length : 0;
+          const snrIMU1 = calculateSNR(filteredIMU1);
+          const snrIMU2 = calculateSNR(filteredIMU2);
+          console.log("IMU1 SNR:", snrIMU1);
+          console.log("IMU2 SNR:", snrIMU2);
+
+          let newActivation = Math.max(Math.abs(snrIMU1), Math.abs(snrIMU2));
 
           // Normalize the activation based on the current level (I_k)
           // Ensure I_k is > 0 
           const normalizedActivation = I_k > 0 ? newActivation / I_k : newActivation;
 
           // === Washout Filter (High-Pass Filter) ===
-          y_filtered = (1 - Math.exp(-h * dt)) * (normalizedActivation - zeta) + Math.exp(-h * dt) * y_filtered;
+          //y_filtered = (1 - Math.exp(-h * dt)) * (normalizedActivation - zeta) + Math.exp(-h * dt) * y_filtered;
   
            // === Compute the Gradient Estimate and Combined Score ===
           //let gradientEstimate = eta_ema * y_filtered;
@@ -535,7 +574,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
           // Combined score: activation performance + weighted gradient
           //let pairScore = newActivation 
-          let pairScore = y_filtered;
+          let pairScore = newActivation;
           updateElectrodeStats(statsTracker, newPair, pairScore);
           console.log(statsTracker);
 
