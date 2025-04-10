@@ -5,8 +5,12 @@ Ver1 - 12/3/2025
 UI almost ready
 
 
-Ver2 (branch1) - verryyy early release of the search algorithm
+Ver2 (branch1) - mulch earlier release of the search algorithm
 
 Ver3 - Added initialization, algorithm modified
 
-Ver4 - Added electrodeStats to track the scores of each electrode, then converted into a .json file. .json file can then be processed again to the spreadsheet to create a heatmap. 
+Ver4 - Added electrodeStats to track the scores of each electrode, then converted into a .json file. .json file can then be processed again to the spreadsheet to create a heatmap
+
+Ver5 - stable enough version, will be modified more later to adjust the parameters
+
+
