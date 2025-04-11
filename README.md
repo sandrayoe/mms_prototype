@@ -5,7 +5,7 @@ Ver1 - 12/3/2025
 UI almost ready
 
 
-Ver2 (branch1) - mulch earlier release of the search algorithm
+Ver2 (branch1) - much earlier release of the search algorithm
 
 Ver3 - Added initialization, algorithm modified
 
