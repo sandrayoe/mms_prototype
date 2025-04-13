@@ -13,4 +13,6 @@ Ver4 - Added electrodeStats to track the scores of each electrode, then converte
 
 Ver5 - stable enough version, will be modified more later to adjust the parameters
 
+Ver6 - updated current search, update electrodeStats filenames
+
 
