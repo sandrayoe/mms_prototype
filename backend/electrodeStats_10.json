@@ -1,0 +1,73 @@
+{
+  "1": {
+    "usage": 5,
+    "aggregatedScore": 32,
+    "scores": [
+      6.4,
+      6.4,
+      6.4,
+      6.4,
+      6.4
+    ],
+    "averageScore": 6.4
+  },
+  "2": {
+    "usage": 4,
+    "aggregatedScore": 25.6,
+    "scores": [
+      6.4,
+      6.4,
+      6.4,
+      6.4
+    ],
+    "averageScore": 6.4
+  },
+  "3": {
+    "usage": 1,
+    "aggregatedScore": 6.4,
+    "scores": [
+      6.4
+    ],
+    "averageScore": 6.4
+  },
+  "4": {
+    "usage": 1,
+    "aggregatedScore": 6.4,
+    "scores": [
+      6.4
+    ],
+    "averageScore": 6.4
+  },
+  "5": {
+    "usage": 0,
+    "aggregatedScore": 0,
+    "scores": [],
+    "averageScore": 0
+  },
+  "6": {
+    "usage": 1,
+    "aggregatedScore": 6.4,
+    "scores": [
+      6.4
+    ],
+    "averageScore": 6.4
+  },
+  "7": {
+    "usage": 0,
+    "aggregatedScore": 0,
+    "scores": [],
+    "averageScore": 0
+  },
+  "8": {
+    "usage": 0,
+    "aggregatedScore": 0,
+    "scores": [],
+    "averageScore": 0
+  },
+  "9": {
+    "usage": 0,
+    "aggregatedScore": 0,
+    "scores": [],
+    "averageScore": 0
+  }
+}

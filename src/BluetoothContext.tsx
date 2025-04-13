@@ -306,45 +306,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }
 
-  //Helper for Washout Filter
-  function applyWashoutFilterToWindow(
-      samples: number[],
-      initialFiltered: number,
-      h: number,
-      dt: number,
-      zeta: number
-    ): number[] {
-      let filteredValues: number[] = [];
-      let currentFiltered = initialFiltered;
-      for (let sample of samples) {
-        currentFiltered = (1 - Math.exp(-h * dt)) * (sample - zeta) + Math.exp(-h * dt) * currentFiltered;
-        filteredValues.push(currentFiltered);
-      }
-      return filteredValues;
-    }
-
-    /**
-     * First-order low-pass filter using the difference equation:
-     * y[n] = y[n-1] + alpha * (x[n] - y[n-1])
-     * @param samples Array of sample values.
-     * @param cutoff Cutoff frequency.
-     * @param dt Sampling time interval.
-     * @returns Array of filtered sample values.
-     */
-    function applyLowPassFilter(samples: number[], cutoff: number, dt: number): number[] {
-      const RC: number = 1 / (2 * Math.PI * cutoff);
-      const alpha: number = dt / (RC + dt);
-      const filtered: number[] = [];
-      let previousFiltered: number = samples[0];
-      
-      for (const sample of samples) {
-        const currentFiltered: number = previousFiltered + alpha * (sample - previousFiltered);
-        filtered.push(currentFiltered);
-        previousFiltered = currentFiltered;
-      }
-      return filtered;
-    }
-
     function nonlinearTransform(
       window: number[],
       power: number = 1.5,
@@ -436,121 +397,92 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const lambdaDecay = 0.4;
       const qVariance = 0.8;
       const dt = 0.1;
-      const numIterations = 50; // Maximum iterations for current search
+      const numIterations = 100; // Maximum iterations for current search
       const alpha = 0.1;       // EMA smoothing factor
-      const learningRate = 0.1;
-      let ineffectiveGradientCount = 0;  // Tracks how many times the gradient was too low to matter
-      let stableGradientCount = 0;       // Tracks how many times the gradient was consistently small
-      const gradientMinimumEffectThreshold = 5.0;  // Below this, gradient can't meaningfully move current
-      const gradientStabilityThreshold = 20.0;      // Above this, gradient is considered "stable"
-      const maxIneffectiveTrials = 3;
-      const consecutiveStableCount = 3;      
+      let stableGradientCount = 3;       // Tracks how many times the gradient was consistently small
+      const gradientStabilityThreshold = 15.0;      // Above this, gradient is considered "stable"
+      const consecutiveStableCount = 3; 
+      let triesAtCurrentLevel = 0;     
     
       // Initialize variables 
       let eta = 0;           // Perturbation variable
       let eta_ema = 0;       // EMA for smoothing the perturbation
-      let stabilityChecking = false;
-
-      const h = 0.7; 
-      const zeta = 0.5; 
-      let y_filtered = 0; 
     
       // === INITIALIZATION ===
       let currentPairIndex = Math.floor(Math.random() * numPairs);
       let I_k = minCurrent;
       console.log(`Phase 1: Starting with Pair: ${electrodePairs[currentPairIndex]}, Current: ${I_k}mA`);
-    
+
+      if (minCurrent == maxCurrent) { 
+        console.log("⚠️ Current level fixed. Skipping Phase 1.");
+      } else {
+      
       // Phase 1: Optimize current level until gradient threshold is consistently met
       for (let iteration = 0; iteration < numIterations && isOptimizationRunningRef.current; iteration++) {
         // --- Stochastic Perturbation and EMA Smoothing ---
         eta = eta - lambdaDecay * eta * dt + Math.sqrt(qVariance) * (Math.random() - 0.5);
         eta_ema = alpha * eta + (1 - alpha) * eta_ema;
-    
+      
         // Randomly perturb the electrode pair index
         const eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
         currentPairIndex = Math.floor(
           Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs))
         );
         const newPair = electrodePairs[currentPairIndex];
-        
-        // Send the new pair to BLE and update the UI immediately
-        console.log(`Phase 1 - Sending Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
+      
+        // Send the new pair to BLE and update UI
+        console.log(`Sending Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
         await sendCommand("e", I_k, newPair[0], newPair[1], 1, 0);
         await new Promise((res) => setTimeout(res, 700));
         updateCurrentPair(newPair);
-    
+      
         // --- Measure Muscle Activation using IMU Data ---
         const windowSize = 10;
         const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
         const recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
-        const nonLinIMU1 = nonlinearTransform(recentIMU1, 1.5, 4); 
-        const nonLinIMU2 = nonlinearTransform(recentIMU2, 1.5, 4); 
+        const nonLinIMU1 = nonlinearTransform(recentIMU1, 1.5, 1); 
+        const nonLinIMU2 = nonlinearTransform(recentIMU2, 1.5, 1); 
         const rmsIMU1 = contrastRMS(nonLinIMU1);
         const rmsIMU2 = contrastRMS(nonLinIMU2);
-        //console.log("Phase 1: IMU1 SNR:", snrIMU1, "IMU2 SNR:", snrIMU2);
-    
-        // Determine activation and normalize based on current
         const newActivation = Math.max(Math.abs(rmsIMU1), Math.abs(rmsIMU2));
-
-        // === Washout Filter (High-Pass Filter) ===
-        y_filtered = (1 - Math.exp(-h * dt)) * (newActivation - zeta) + Math.exp(-h * dt) * y_filtered;
-
+      
         // --- Compute the Gradient Estimate ---
-        const gradientEstimate = Math.abs(eta_ema * y_filtered);
+        const gradientEstimate = Math.abs(eta_ema * newActivation);
         console.log(`Gradient Estimate: ${gradientEstimate}`);
-
-        if (stabilityChecking) {
-          // --- Stability Checking Mode ---
-          if (Math.abs(gradientEstimate) >= gradientStabilityThreshold) {
-            stableGradientCount++;
       
-            if (stableGradientCount >= consecutiveStableCount) {
-              console.log("✅ Gradient stable — locking in current level.");
-              break; // Lock-in current
-            }
-          } else {
-            stabilityChecking = false;
-            stableGradientCount = 0;
-          }
-          // Don't update I_k during stability checking
-          //await new Promise((res) => setTimeout(res, 700));
-          continue;
-        }
+        triesAtCurrentLevel++;
       
-        // --- Normal Update Logic ---
-        if (Math.abs(gradientEstimate) <= gradientMinimumEffectThreshold) {
-          ineffectiveGradientCount++;
+        if (gradientEstimate >= gradientStabilityThreshold) {
+          stableGradientCount++;
+          console.log(`Stable gradient (${stableGradientCount}/${consecutiveStableCount})`);
       
-          if (ineffectiveGradientCount >= maxIneffectiveTrials) {
-            console.log("⏫ Gradient too weak — forcing current increment +1");
-            I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k + 1)));
-            updateCurrentValue(I_k);
-            ineffectiveGradientCount = 0;
-            stableGradientCount = 0;
+          if (stableGradientCount >= consecutiveStableCount) {
+            console.log("✅ Gradient stable — locking in current level.");
+            break;
           }
         } else {
-          // Reset ineffective counter since the gradient is meaningful
-          ineffectiveGradientCount = 0;
-      
-          if (Math.abs(gradientEstimate) >= gradientStabilityThreshold) {
-            console.log("🔍 Entering stability checking mode...");
-            stabilityChecking = true;
-            stableGradientCount = 1;  // First stable trial
-          } else {
-            // Normal I_k update when gradient is strong and unstable
-            stableGradientCount = 0;
-            I_k = I_k + learningRate * gradientEstimate;
-            I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k)));
-            updateCurrentValue(I_k);
-          }
+          stableGradientCount = 0;
         }
       
-        //await new Promise((res) => setTimeout(res, 700));
-      }
+        if (triesAtCurrentLevel >= 3 && stableGradientCount === 0) {
+          if (I_k >= maxCurrent) {
+            console.log("⚠️ Reached max current level — locking at", I_k, "mA without stable gradient.");
+            break;
+          }
+
+          I_k = Math.min(maxCurrent, I_k + 1);
+          updateCurrentValue(I_k);
+          console.log("⏫ No stable gradient after 3 tries — incrementing current to", I_k);
+      
+          triesAtCurrentLevel = 0;
+        }
+      }   
     
       // --- Phase 1 Complete: Current is Locked In ---
       console.log(`Locked current level: ${I_k}mA. Entering Phase 2 for electrode stats update.`);
 
+      }
+    
       // --- Phase 2: Electrode Stats Update with Locked Current ---
       const statsTracker = createElectrodeStatsTracker(numElectrodes); 
 
@@ -571,10 +503,8 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const windowSize = 10;
         const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
         const recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
-        //const filteredIMU1 = applyLowPassFilter(recentIMU1, 1.0, dt);
-        //const filteredIMU2 = applyLowPassFilter(recentIMU2, 1.0, dt);
-        const nonLinIMU1 = nonlinearTransform(recentIMU1, 2, 1); 
-        const nonLinIMU2 = nonlinearTransform(recentIMU2, 2, 1); 
+        const nonLinIMU1 = nonlinearTransform(recentIMU1, 1.5, 1); 
+        const nonLinIMU2 = nonlinearTransform(recentIMU2, 1.5, 1); 
         const rmsIMU1 = contrastRMS(nonLinIMU1);
         const rmsIMU2 = contrastRMS(nonLinIMU2);
         const newActivation = Math.max(Math.abs(rmsIMU1),Math.abs(rmsIMU2));
@@ -586,7 +516,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // === Stopping Condition Check ===
         const allElectrodesTriedMinimumTimes = Object.values(statsTracker).every(
-          (stat) => stat.usage >= 5
+          (stat) => stat.usage >= 7
         );
 
         if (allElectrodesTriedMinimumTimes) {
@@ -605,7 +535,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const restScores = rest.map(e => e.averageScore);
             const restMean = mean(restScores);
         
-            const k = 3.5; // Adjust as needed
+            const k = 5.0; // Adjust 
             scoreGapCondition = top4Avg > (restMean + 3.5);
         
             console.log(`Top4 Avg: ${top4Avg.toFixed(2)}, Rest Mean: ${restMean.toFixed(2)}`);
@@ -619,8 +549,6 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
           }
         }        
-
-        
       }
 
       // Send the final electrode stats to a backend
