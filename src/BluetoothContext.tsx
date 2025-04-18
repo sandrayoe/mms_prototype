@@ -399,9 +399,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const dt = 0.1;
       const numIterations = 100; // Maximum iterations for current search
       const alpha = 0.1;       // EMA smoothing factor
-      let stableGradientCount = 3;       // Tracks how many times the gradient was consistently small
       const gradientStabilityThreshold = 15.0;      // Above this, gradient is considered "stable"
-      const consecutiveStableCount = 3; 
       let triesAtCurrentLevel = 0;     
     
       // Initialize variables 
@@ -417,25 +415,25 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         console.log("⚠️ Current level fixed. Skipping Phase 1.");
       } else {
       
-      // Phase 1: Optimize current level until gradient threshold is consistently met
+      // Phase 1: Optimize current level until gradient threshold is met at least once within 3 tries
       for (let iteration = 0; iteration < numIterations && isOptimizationRunningRef.current; iteration++) {
         // --- Stochastic Perturbation and EMA Smoothing ---
         eta = eta - lambdaDecay * eta * dt + Math.sqrt(qVariance) * (Math.random() - 0.5);
         eta_ema = alpha * eta + (1 - alpha) * eta_ema;
-      
+
         // Randomly perturb the electrode pair index
         const eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
         currentPairIndex = Math.floor(
           Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs))
         );
         const newPair = electrodePairs[currentPairIndex];
-      
+
         // Send the new pair to BLE and update UI
         console.log(`Sending Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
         await sendCommand("e", I_k, newPair[0], newPair[1], 1, 0);
         await new Promise((res) => setTimeout(res, 700));
         updateCurrentPair(newPair);
-      
+
         // --- Measure Muscle Activation using IMU Data ---
         const windowSize = 10;
         const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
@@ -445,41 +443,33 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const rmsIMU1 = contrastRMS(nonLinIMU1);
         const rmsIMU2 = contrastRMS(nonLinIMU2);
         const newActivation = Math.max(Math.abs(rmsIMU1), Math.abs(rmsIMU2));
-      
+
         // --- Compute the Gradient Estimate ---
         const gradientEstimate = Math.abs(eta_ema * newActivation);
         console.log(`Gradient Estimate: ${gradientEstimate}`);
-      
+
         triesAtCurrentLevel++;
-      
+
+        // ✅ Lock in immediately if threshold is met
         if (gradientEstimate >= gradientStabilityThreshold) {
-          stableGradientCount++;
-          console.log(`Stable gradient (${stableGradientCount}/${consecutiveStableCount})`);
-      
-          if (stableGradientCount >= consecutiveStableCount) {
-            console.log("✅ Gradient stable — locking in current level.");
-            break;
-          }
-        } else {
-          stableGradientCount = 0;
+          console.log(`✅ Gradient exceeded threshold (try ${triesAtCurrentLevel}) — locking in current level.`);
+          break;
         }
-      
-        if (triesAtCurrentLevel >= 3 && stableGradientCount === 0) {
+
+        // After 3 tries with no threshold met, increment current
+        if (triesAtCurrentLevel >= 3) {
           if (I_k >= maxCurrent) {
-            console.log("⚠️ Reached max current level — locking at", I_k, "mA without stable gradient.");
+            console.log("⚠️ Reached max current level — locking at", I_k, "mA without meeting threshold.");
             break;
           }
 
           I_k = Math.min(maxCurrent, I_k + 1);
           updateCurrentValue(I_k);
-          console.log("⏫ No stable gradient after 3 tries — incrementing current to", I_k);
-      
+          console.log("⏫ Threshold not met in 3 tries — incrementing current to", I_k);
+
           triesAtCurrentLevel = 0;
         }
-      }   
-    
-      // --- Phase 1 Complete: Current is Locked In ---
-      console.log(`Locked current level: ${I_k}mA. Entering Phase 2 for electrode stats update.`);
+      }
 
       }
     
@@ -516,7 +506,7 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // === Stopping Condition Check ===
         const allElectrodesTriedMinimumTimes = Object.values(statsTracker).every(
-          (stat) => stat.usage >= 7
+          (stat) => stat.usage >= 9
         );
 
         if (allElectrodesTriedMinimumTimes) {
