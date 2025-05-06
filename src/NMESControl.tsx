@@ -33,8 +33,8 @@ const NMESControlPanel: React.FC = () => {
   const [currentBeingTested, setCurrentBeingTested] = useState<number | null>(null);
   const [bestCurrent, setBestCurrent] = useState<number | null>(null);
 
-  const [minCurrent, setMinCurrent] = useState(1.0);
-  const [maxCurrent, setMaxCurrent] = useState(18.0);
+  const [minCurrent, setMinCurrent] = useState(10.0);
+  const [maxCurrent, setMaxCurrent] = useState(25.0);
 
   const sampleCountRef = useRef(0);
 
@@ -109,10 +109,12 @@ const NMESControlPanel: React.FC = () => {
       setCurrentPair(null);
       setBestCurrent(null);
       setCurrentBeingTested(null);
+      setSensor1Data([]);
+      setSensor2Data([]);
 
       await runOptimizationLoop(
         (pair) => setCurrentPair(pair),
-        (pair) => {setBestPair(pair); handleStopIMU();},
+        (pair) => { setBestPair(pair); handleStopIMU(); },
         (current) => setCurrentBeingTested(current),
         (current) => setBestCurrent(current),
         minCurrent,
@@ -129,8 +131,6 @@ const NMESControlPanel: React.FC = () => {
   const handleStartIMU = () => {
     setIsMeasuring(true);
     startIMU();
-    setSensor1Data([]);
-    setSensor2Data([]);
   };
 
   const handleStopIMU = () => {

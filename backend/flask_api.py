@@ -12,13 +12,47 @@ CORS(app)
 def save_electrode_stats():
     data = request.get_json()
     print("Current working directory:", os.getcwd())
+
+    base_filename = "electrodeStats"
+    extension = ".json"
+    filename = base_filename + extension
+    index = 1
+
+    # Find the next available filename
+    while os.path.exists(filename):
+        filename = f"{base_filename}_{index}{extension}"
+        index += 1
+
     try:
-        with open('electrodeStats.json', 'w') as f:
+        with open(filename, 'w') as f:
             json.dump(data, f, indent=2)
-        return jsonify({"message": "Electrode stats saved successfully."}), 200
+        return jsonify({"message": f"Electrode stats saved as {filename}."}), 200
     except Exception as e:
         return jsonify({"error": f"Failed to save data: {str(e)}"}), 500
-    
+
+@app.route("/save-raw-imu", methods=["POST"])
+def save_raw_imu():
+    data = request.get_json()
+    print("Received raw IMU data")
+
+    base_filename = "rawIMU"
+    extension = ".json"
+    filename = base_filename + extension
+    index = 1
+
+    # Find a unique filename
+    while os.path.exists(filename):
+        filename = f"{base_filename}_{index}{extension}"
+        index += 1
+
+    try:
+        with open(filename, 'w') as f:
+            json.dump(data, f, indent=2)
+        return jsonify({"message": f"Raw IMU data saved as {filename}."}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to save IMU data: {str(e)}"}), 500
+
+
 @app.route("/kill-server", methods=["POST"])
 def kill_server():
     """Terminate the React app running on port 3000."""
