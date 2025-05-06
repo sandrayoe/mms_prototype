@@ -15,4 +15,5 @@ Ver5 - stable enough version, will be modified more later to adjust the paramete
 
 Ver6 - updated current search, update electrodeStats filenames
 
+Ver7 - Added Wavelet Transform, fixed current level search
 
