@@ -306,64 +306,52 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }
 
-  //Helper for Washout Filter
-  function applyWashoutFilterToWindow(
-      samples: number[],
-      initialFiltered: number,
-      h: number,
-      dt: number,
-      zeta: number
-    ): number[] {
-      let filteredValues: number[] = [];
-      let currentFiltered = initialFiltered;
-      for (let sample of samples) {
-        currentFiltered = (1 - Math.exp(-h * dt)) * (sample - zeta) + Math.exp(-h * dt) * currentFiltered;
-        filteredValues.push(currentFiltered);
+    // Wavelet-based transformation using Haar wavelet
+    function waveletTransform(window: number[], levels: number = 3): number[] {
+      let coeffs = window.slice();
+
+      for (let level = 0; level < levels; level++) {
+        const temp: number[] = [];
+        const half = coeffs.length / 2;
+
+        for (let i = 0; i < half; i++) {
+          const avg = (coeffs[2 * i] + coeffs[2 * i + 1]) / Math.sqrt(2);
+          const diff = (coeffs[2 * i] - coeffs[2 * i + 1]) / Math.sqrt(2);
+          temp[i] = avg;
+          temp[half + i] = diff;
+        }
+
+        coeffs = temp.slice(0, coeffs.length);
       }
-      return filteredValues;
+
+      return coeffs;
     }
 
-    /**
-     * First-order low-pass filter using the difference equation:
-     * y[n] = y[n-1] + alpha * (x[n] - y[n-1])
-     * @param samples Array of sample values.
-     * @param cutoff Cutoff frequency.
-     * @param dt Sampling time interval.
-     * @returns Array of filtered sample values.
-     */
-    function applyLowPassFilter(samples: number[], cutoff: number, dt: number): number[] {
-      const RC: number = 1 / (2 * Math.PI * cutoff);
-      const alpha: number = dt / (RC + dt);
-      const filtered: number[] = [];
-      let previousFiltered: number = samples[0];
-      
-      for (const sample of samples) {
-        const currentFiltered: number = previousFiltered + alpha * (sample - previousFiltered);
-        filtered.push(currentFiltered);
-        previousFiltered = currentFiltered;
-      }
-      return filtered;
-    }
-
-    function nonlinearTransform(
-      window: number[],
-      power: number = 1.5,
-      gain: number = 1
-    ): number[] {
-      return window.map(v => {
-        const transformed = Math.pow(Math.abs(v), power);
-        return Math.sign(v) * transformed * gain;
-      });
-    }
-
-    function contrastRMS(window: number[]): number {
-      if (window.length === 0) return 0;
-      
-      const absValues = window.map(Math.abs);
-      const max = Math.max(...absValues);
-      const mean = absValues.reduce((sum, v) => sum + v, 0) / absValues.length;
-      
-      return max - mean; // Peak-to-average gap
+    function extractD3D2Energy(window: number[], levels: number = 3): number {
+      const waveletCoeffs = waveletTransform(window, levels);
+    
+      const coeffLength = waveletCoeffs.length;
+      const sizeA3 = coeffLength / Math.pow(2, levels);;  
+      const sizeD3 = sizeA3;
+      const sizeD2 = sizeA3 * 2;
+    
+      const startD3 = sizeA3;
+      const endD3 = startD3 + sizeD3;
+      const startD2 = endD3;
+      const endD2 = startD2 + sizeD2;
+    
+      const d3Coeffs = waveletCoeffs.slice(startD3, endD3);
+      const d2Coeffs = waveletCoeffs.slice(startD2, endD2);
+    
+      // Energy = sum of absolute values raised to the power of 'p'
+      const p = 1.5; // You can adjust this value to control the amplification
+      const energyD3 = d3Coeffs.reduce((sum, x) => sum + Math.pow(Math.abs(x), p), 0);
+      const energyD2 = d2Coeffs.reduce((sum, x) => sum + Math.pow(Math.abs(x), p), 0);
+    
+      // Combine them with a weight, or equally if unsure
+      const combinedEnergy = 1.0 * energyD3 + 0.0 * energyD2;
+    
+      return combinedEnergy;
     }
 
     // Helper function to create a combined electrode stats tracker
@@ -372,16 +360,18 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       aggregatedScore: number;
       scores: number[];
       averageScore: number; 
+      ewmaScore: number;
     }
     
     const createElectrodeStatsTracker = (numElectrodes: number): Record<number, ElectrodeStats> => {
       const tracker: Record<number, ElectrodeStats> = {};
-      for (let i = 1; i <= numElectrodes; i++) {
+      for (let i = 3; i <= numElectrodes; i++) {
         tracker[i] = {
           usage: 0,
           aggregatedScore: 0,
           scores: [],
           averageScore: 0,
+          ewmaScore: 0,
         };
       }
       return tracker;
@@ -390,23 +380,26 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const updateElectrodeStats = (
       tracker: Record<number, ElectrodeStats>,
       pair: [number, number],
-      pairScore: number
+      pairScore: number,
     ): void => {
       pair.forEach(electrode => {
-        tracker[electrode].usage++;
-        tracker[electrode].aggregatedScore += pairScore;
-        tracker[electrode].scores.push(pairScore);
-        // Update the average score; avoid division by zero
-        tracker[electrode].averageScore = tracker[electrode].usage > 0 
-          ? tracker[electrode].aggregatedScore / tracker[electrode].usage 
-          : 0;
+        const stats = tracker[electrode];
+        stats.usage++;
+        
+        // Update EWMA
+        if (stats.usage === 1) {
+          //Initialize EWMA with the first score
+          stats.ewmaScore = pairScore;
+        } else {
+          stats.ewmaScore = 1.0 * pairScore + 0.0 * stats.ewmaScore;
+        }
+
+        stats.scores.push(pairScore);
+        stats.aggregatedScore += stats.ewmaScore;
+        stats.averageScore = stats.aggregatedScore / stats.usage;
       });
     };
-
-    function mean(arr: number[]): number {
-      if (arr.length === 0) return 0;
-      return arr.reduce((sum, val) => sum + val, 0) / arr.length;
-    }
+    
 
     const runOptimizationLoop = async (
       updateCurrentPair: (pair: [number, number]) => void,
@@ -425,168 +418,164 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Generate unique electrode pairs (9 electrodes → 36 pairs)
       const electrodePairs: [number, number][] = [];
       const numElectrodes = 9;
-      for (let i = 1; i <= numElectrodes; i++) {
+      for (let i = 3; i <= numElectrodes; i++) {
         for (let j = i + 1; j <= numElectrodes; j++) {
           electrodePairs.push([i, j]);
         }
       }
       const numPairs = electrodePairs.length;
+
+      const capturedIMUData: { imu1: number[], imu2: number[] }[] = []
     
       // === SES PARAMETERS ===
-      const lambdaDecay = 0.4;
-      const qVariance = 0.8;
-      const dt = 0.1;
-      const numIterations = 50; // Maximum iterations for current search
-      const alpha = 0.1;       // EMA smoothing factor
-      const learningRate = 0.1;
-      let ineffectiveGradientCount = 0;  // Tracks how many times the gradient was too low to matter
-      let stableGradientCount = 0;       // Tracks how many times the gradient was consistently small
-      const gradientMinimumEffectThreshold = 5.0;  // Below this, gradient can't meaningfully move current
-      const gradientStabilityThreshold = 20.0;      // Above this, gradient is considered "stable"
-      const maxIneffectiveTrials = 3;
-      const consecutiveStableCount = 3;      
-    
-      // Initialize variables 
-      let eta = 0;           // Perturbation variable
-      let eta_ema = 0;       // EMA for smoothing the perturbation
-      let stabilityChecking = false;
-
-      const h = 0.7; 
-      const zeta = 0.5; 
-      let y_filtered = 0; 
+      const numIterations = 100; // Maximum iterations for phase 1
+      const gradientStabilityThreshold = 15.0;      // threshold for "best pair" in phase 1
+      const finalPerformanceThreshold = 30.0;     // threshold for final current in phase 1
     
       // === INITIALIZATION ===
       let currentPairIndex = Math.floor(Math.random() * numPairs);
       let I_k = minCurrent;
+      let bestPairFound = false;
+      let bestPair: [number, number] = [3, 4]; // default for beginning
+
       console.log(`Phase 1: Starting with Pair: ${electrodePairs[currentPairIndex]}, Current: ${I_k}mA`);
-    
-      // Phase 1: Optimize current level until gradient threshold is consistently met
+
+      if (minCurrent == maxCurrent) { 
+        console.log("⚠️ Current level fixed. Skipping Phase 1.");
+      } else {
+
+      let justFoundBestPair = false; 
+      let firstTimeBestPairFound = false;
+
+      // Phase 1: Optimize current level until gradient threshold is reached
       for (let iteration = 0; iteration < numIterations && isOptimizationRunningRef.current; iteration++) {
-        // --- Stochastic Perturbation and EMA Smoothing ---
-        eta = eta - lambdaDecay * eta * dt + Math.sqrt(qVariance) * (Math.random() - 0.5);
-        eta_ema = alpha * eta + (1 - alpha) * eta_ema;
-    
-        // Randomly perturb the electrode pair index
-        const eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
-        currentPairIndex = Math.floor(
-          Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs))
-        );
-        const newPair = electrodePairs[currentPairIndex];
-        
-        // Send the new pair to BLE and update the UI immediately
-        console.log(`Phase 1 - Sending Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
+        // --- Stochastic Perturbations ---
+        let newPair = electrodePairs[currentPairIndex];
+        let performance = 0; 
+  
+
+        if (!bestPairFound) {
+          const eta_noise_pair = Math.sqrt(0.7) * (Math.random() - 0.5);
+          currentPairIndex = Math.floor(
+            Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise_pair * numPairs))
+          );
+          newPair = electrodePairs[currentPairIndex];
+          bestPair = newPair;
+
+          // Randomly perturb current level
+          const eta_noise_current = Math.sqrt(0.7) * (Math.random() - 0.5);
+          I_k = Math.round(Math.max(minCurrent, Math.min(maxCurrent, I_k + eta_noise_current * (maxCurrent - minCurrent))));
+          firstTimeBestPairFound = true; 
+        } else {
+          newPair = bestPair; 
+          if (firstTimeBestPairFound) {
+            I_k = minCurrent; // start fresh
+            firstTimeBestPairFound = false; 
+          } else {
+            if (I_k >= maxCurrent) {
+              console.log("⚠️ Max current reached — stopping optimization.");
+              break;
+            }
+            I_k = Math.min(I_k + 1, maxCurrent);
+          }
+        }
+
+        updateCurrentValue(I_k);
+        updateCurrentPair(newPair);
+
+        // Send parameters to BLE and UI
         await sendCommand("e", I_k, newPair[0], newPair[1], 1, 0);
         await new Promise((res) => setTimeout(res, 700));
-        updateCurrentPair(newPair);
-    
-        // --- Measure Muscle Activation using IMU Data ---
-        const windowSize = 10;
-        const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
-        const recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
-        const nonLinIMU1 = nonlinearTransform(recentIMU1, 1.5, 4); 
-        const nonLinIMU2 = nonlinearTransform(recentIMU2, 1.5, 4); 
-        const rmsIMU1 = contrastRMS(nonLinIMU1);
-        const rmsIMU2 = contrastRMS(nonLinIMU2);
-        //console.log("Phase 1: IMU1 SNR:", snrIMU1, "IMU2 SNR:", snrIMU2);
-    
-        // Determine activation and normalize based on current
-        const newActivation = Math.max(Math.abs(rmsIMU1), Math.abs(rmsIMU2));
 
-        // === Washout Filter (High-Pass Filter) ===
-        y_filtered = (1 - Math.exp(-h * dt)) * (newActivation - zeta) + Math.exp(-h * dt) * y_filtered;
+        const imu1 = imuDataRef.current.imu1_changes;
+        const imu2 = imuDataRef.current.imu2_changes;
 
-        // --- Compute the Gradient Estimate ---
-        const gradientEstimate = Math.abs(eta_ema * y_filtered);
-        console.log(`Gradient Estimate: ${gradientEstimate}`);
+        // Discard the first 3 readings after stimulation
+        const cleanedIMU1 = imu1.slice(-12).slice(4);
+        const cleanedIMU2 = imu2.slice(-12).slice(4);
+        //console.log("Cleaned IMU1:", cleanedIMU1, "Length:", cleanedIMU1.length);
 
-        if (stabilityChecking) {
-          // --- Stability Checking Mode ---
-          if (Math.abs(gradientEstimate) >= gradientStabilityThreshold) {
-            stableGradientCount++;
-      
-            if (stableGradientCount >= consecutiveStableCount) {
-              console.log("✅ Gradient stable — locking in current level.");
-              break; // Lock-in current
-            }
-          } else {
-            stabilityChecking = false;
-            stableGradientCount = 0;
+        const energy = Math.max(
+          extractD3D2Energy(cleanedIMU1),
+          extractD3D2Energy(cleanedIMU2)
+        );
+
+        // --- Measure Response ---
+        //const recentIMU1 = imuDataRef.current.imu1_changes.slice(-8);
+        //const recentIMU2 = imuDataRef.current.imu2_changes.slice(-8);
+        //const energy = Math.max(extractD3D2Energy(recentIMU1), extractD3D2Energy(recentIMU2));
+
+        performance = energy;
+        console.log(`Performance estimate: ${performance}`);
+
+        // Stop if threshold met
+        if (!bestPairFound) {
+          if (performance >= gradientStabilityThreshold) {
+            console.log("✅ Best pair found — switching to current optimization only.");
+            bestPairFound = true;
+            justFoundBestPair = true; // mark transition
           }
-          // Don't update I_k during stability checking
-          //await new Promise((res) => setTimeout(res, 700));
-          continue;
-        }
-      
-        // --- Normal Update Logic ---
-        if (Math.abs(gradientEstimate) <= gradientMinimumEffectThreshold) {
-          ineffectiveGradientCount++;
-      
-          if (ineffectiveGradientCount >= maxIneffectiveTrials) {
-            console.log("⏫ Gradient too weak — forcing current increment +1");
-            I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k + 1)));
-            updateCurrentValue(I_k);
-            ineffectiveGradientCount = 0;
-            stableGradientCount = 0;
+        } else if (!justFoundBestPair) {
+          // Only start checking final threshold in iterations *after* the switch
+          if (performance >= finalPerformanceThreshold) {
+            console.log("✅ Final performance threshold met — stopping optimization.");
+            break;
           }
         } else {
-          // Reset ineffective counter since the gradient is meaningful
-          ineffectiveGradientCount = 0;
-      
-          if (Math.abs(gradientEstimate) >= gradientStabilityThreshold) {
-            console.log("🔍 Entering stability checking mode...");
-            stabilityChecking = true;
-            stableGradientCount = 1;  // First stable trial
-          } else {
-            // Normal I_k update when gradient is strong and unstable
-            stableGradientCount = 0;
-            I_k = I_k + learningRate * gradientEstimate;
-            I_k = Math.round(Math.min(maxCurrent, Math.max(minCurrent, I_k)));
-            updateCurrentValue(I_k);
-          }
+          // Clear the flag so that next iteration can check final threshold
+          justFoundBestPair = false;
         }
-      
-        //await new Promise((res) => setTimeout(res, 700));
       }
+    }
     
-      // --- Phase 1 Complete: Current is Locked In ---
-      console.log(`Locked current level: ${I_k}mA. Entering Phase 2 for electrode stats update.`);
-
       // --- Phase 2: Electrode Stats Update with Locked Current ---
       const statsTracker = createElectrodeStatsTracker(numElectrodes); 
 
       while (isOptimizationRunningRef.current) {
         // Randomly perturb the electrode pair index
-        const eta_noise = Math.sqrt(qVariance) * (Math.random() - 0.5);
-        currentPairIndex = Math.floor(
-          Math.max(0, Math.min(numPairs - 1, currentPairIndex + eta_noise * numPairs))
-        );
-        const lockedPair = electrodePairs[currentPairIndex];
+        // Uniformly sample from all pairs each iteration
+        const randomPairIndex = Math.floor(Math.random() * electrodePairs.length);
+        const newPair = electrodePairs[randomPairIndex];
         
-        console.log(`Phase 2: Sending Pair (${lockedPair[0]}, ${lockedPair[1]}) at ${I_k}mA`);
-        await sendCommand("e", I_k, lockedPair[0], lockedPair[1], 1, 0);
+        console.log(`Phase 2: Sending Pair (${newPair[0]}, ${newPair[1]}) at ${I_k}mA`);
+        updateCurrentPair(newPair);
+        await sendCommand("e", I_k, newPair[0], newPair[1], 1, 0);
+        //await sendCommand("e", I_k, 1, 2, 1, 0);
         await new Promise((res) => setTimeout(res, 700));
-        updateCurrentPair(lockedPair);
-
+        
         // Measure activation using recent IMU data
-        const windowSize = 10;
-        const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
-        const recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
-        //const filteredIMU1 = applyLowPassFilter(recentIMU1, 1.0, dt);
-        //const filteredIMU2 = applyLowPassFilter(recentIMU2, 1.0, dt);
-        const nonLinIMU1 = nonlinearTransform(recentIMU1, 2, 1); 
-        const nonLinIMU2 = nonlinearTransform(recentIMU2, 2, 1); 
-        const rmsIMU1 = contrastRMS(nonLinIMU1);
-        const rmsIMU2 = contrastRMS(nonLinIMU2);
-        const newActivation = Math.max(Math.abs(rmsIMU1),Math.abs(rmsIMU2));
-        const pairScore = newActivation;
+        //const windowSize = 8;
+        //const recentIMU1 = imuDataRef.current.imu1_changes.slice(-windowSize);
+        //const recentIMU2 = imuDataRef.current.imu2_changes.slice(-windowSize);
 
-        updateElectrodeStats(statsTracker, lockedPair, pairScore);
+        //capturedIMUData.push({
+          //imu1: [...recentIMU1],
+          //imu2: [...recentIMU2]
+        //});
 
-        let scoreGapCondition = false;
+        //const energyIMU1 = extractD3D2Energy(recentIMU1);
+        //const energyIMU2 = extractD3D2Energy(recentIMU2);
+        //const newActivation = Math.max(energyIMU1, energyIMU2);
+        
+        const imu1 = imuDataRef.current.imu1_changes;
+        const imu2 = imuDataRef.current.imu2_changes;
+
+        // Discard the first 3 readings after stimulation
+        const cleanedIMU1 = imu1.slice(-12).slice(3);
+        const cleanedIMU2 = imu2.slice(-12).slice(3);
+
+        const energy = Math.max(
+          extractD3D2Energy(cleanedIMU1),
+          extractD3D2Energy(cleanedIMU2)
+        );
+
+        const pairScore = energy;
+
+        updateElectrodeStats(statsTracker, newPair, pairScore);
 
         // === Stopping Condition Check ===
         const allElectrodesTriedMinimumTimes = Object.values(statsTracker).every(
-          (stat) => stat.usage >= 5
+          (stat) => stat.usage >= 7
         );
 
         if (allElectrodesTriedMinimumTimes) {
@@ -599,28 +588,13 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         
           if (sortedElectrodes.length >= 6) {
             const top4 = sortedElectrodes.slice(0, 4);
-            const rest = sortedElectrodes.slice(4);
-        
-            const top4Avg = mean(top4.map(e => e.averageScore));
-            const restScores = rest.map(e => e.averageScore);
-            const restMean = mean(restScores);
-        
-            const k = 3.5; // Adjust as needed
-            scoreGapCondition = top4Avg > (restMean + 3.5);
-        
-            console.log(`Top4 Avg: ${top4Avg.toFixed(2)}, Rest Mean: ${restMean.toFixed(2)}`);
-        
-            if (scoreGapCondition) {
-              const bestPair: [number, number] = [top4[0].electrode, top4[1].electrode];
-              console.log("✅ Stopping Phase 2: Top 4 are 'proven' better. Best Pair:", bestPair);
-              updateBestPair(bestPair);
-              updateBestCurrent(I_k);
-              break;
-            }
+            const bestPair: [number, number] = [top4[0].electrode, top4[1].electrode];
+            console.log("✅ Stopping Phase 2. Top 4:", top4[0].electrode, top4[1].electrode, top4[2].electrode, top4[3].electrode);
+            updateBestPair(bestPair);
+            updateBestCurrent(I_k);
+            break;
           }
         }        
-
-        
       }
 
       // Send the final electrode stats to a backend
@@ -638,6 +612,12 @@ export const BluetoothProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       await stopOptimizationLoop();
+
+      //await fetch("http://localhost:5000/save-raw-imu", {
+        //method: "POST",
+        //headers: { "Content-Type": "application/json" },
+        //body: JSON.stringify(capturedIMUData),
+      //});
     };
   
     const stopOptimizationLoop = async () => {
