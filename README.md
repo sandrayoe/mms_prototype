@@ -1,5 +1,6 @@
-# mms_prototype_trial
+# mms_prototype
 Only for prototyping
+Based: React (TypeScript)
 
 
 See other brances for each version
