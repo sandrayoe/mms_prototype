@@ -3,7 +3,9 @@ Only for prototyping
 Based: React (TypeScript)
 
 
-See other brances for each version
+See other branches for each version
+
+Main program is located in src-BluetoothContext.tsx
 
 Ver1 - 12/3/2025
 UI almost ready
