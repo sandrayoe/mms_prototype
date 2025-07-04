@@ -6,11 +6,11 @@ Based: React (TypeScript)
 See other branches for each version
 
 Main program is located in src-BluetoothContext.tsx
+Main algorithm is inside the runOptimizationLoop function. Application of SES algorithm but with statistical checking: the electrodes must satisfy the minimum 'Usage' requirements. 'Usage' = minimum trial of each electrode. 
 
-Ver1 - 12/3/2025
-UI almost ready
+Ver1 - UI almost ready
 
-Ver2 (branch1) - Much earlier release of the search algorithm (pure SES)
+Ver2 - Much earlier release of the search algorithm (pure SES)
 
 Ver3 - Added initialization, algorithm modified
 
@@ -22,7 +22,6 @@ Ver6 - Updated current search, update electrodeStats filenames
 
 Ver7 - Added Wavelet Transform, fixed current level search
 
-Ver 8 - Adjusted wavelet, simplification
+Ver 8 - Adjusted wavelet, simplification of the algorithm
 
-
-
+Final report accessible in kth-diva later. 
