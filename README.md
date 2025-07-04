@@ -9,9 +9,7 @@ Main program is located in src-BluetoothContext.tsx
 
 Main algorithm is inside the runOptimizationLoop function. Application of SES algorithm but with statistical checking: the electrodes must satisfy the minimum 'Usage' requirements. 'Usage' = minimum trial of each electrode. 
 
-Ver1 - UI almost ready
-
-Ver2 - Much earlier release of the search algorithm (pure SES)
+Ver1 & 2 - UI almost ready, much earlier release of the search algorithm (pure SES)
 
 Ver3 - Added initialization, algorithm modified
 
