@@ -1,6 +1,5 @@
 # mms_prototype
-Only for prototyping
-Based: React (TypeScript)
+Only for prototyping. Based: React (TypeScript)
 
 
 See other branches for each version
